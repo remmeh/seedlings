@@ -116,7 +116,7 @@ struct ContentView: View {
             SpriteView(scene: scene, preferredFramesPerSecond: 120)
                 .ignoresSafeArea()
                 .accessibilityLabel("Island game board")
-                .accessibilityHint("Drag anywhere to steer freely. Lift your finger to stop.")
+                .accessibilityHint("Touch and hold anywhere. Your fruit follows your finger. Lift to stop.")
             VStack {
                 HStack(alignment: .top, spacing: 16) {
                     VStack(alignment: .leading, spacing: 5) {
@@ -221,7 +221,7 @@ struct ContentView: View {
                 .frame(width: 44, height: 44).background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 13))
         }.buttonStyle(.plain)
             .simultaneousGesture(DragGesture(minimumDistance: 0)
-                .onChanged { _ in if !scene.frozen { scene.heading = nil; scene.steering = direction } }
+                .onChanged { _ in if !scene.frozen { scene.clearInput(); scene.steering = direction } }
                 .onEnded { _ in scene.steering = nil })
             .accessibilityLabel("Move \(symbol.replacingOccurrences(of: "arrow.", with: "").replacingOccurrences(of: ".", with: " "))")
     }
@@ -284,7 +284,7 @@ struct ContentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     Text("Little loops.\nBig possibilities.").font(.system(size: 36, weight: .heavy, design: .rounded))
-                    helpRow("hand.draw.fill", "1. Find your feet", "Touch anywhere on the island and drag to steer freely in any direction. Keep your finger down to move; lift it to stop. Tap Controls to show the arrow buttons.")
+                    helpRow("hand.draw.fill", "1. Find your feet", "Touch and hold anywhere on the island. Your fruit moves toward your finger, and follows as you move it. It stops when it reaches your finger or you lift it. Tap Controls to show the arrow buttons.")
                     helpRow("point.topleft.down.to.point.bottomright.curvepath", "2. Make a loop", "Leave your colored patch to draw a seed trail. Return to your territory to claim the trail and everything enclosed—even another fruit's land.")
                     helpRow("scissors", "3. Protect your trail", "Cross a rival's exposed trail to snip it. If yours gets cut, or you cross your own trail, you return home. Your existing land stays yours.")
                     helpRow("crown.fill", "4. Wear the crown", "The fruit with the most land wears the crown. The round ends only when 100% of the island is claimed. The biggest kingdom wins; ties favor You, then the listed rival order.")

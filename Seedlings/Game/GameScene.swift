@@ -18,7 +18,7 @@ final class GameScene: SKScene {
     var onTick: (() -> Void)?
     var onEvent: ((GameEvent) -> Void)?
     var steering: Direction?
-    var heading: GamePoint?
+    private var touchTarget: GamePoint?
     var frozen = false
     private let board = SKNode()
     private var sprites: [Int: SKNode] = [:]
@@ -31,10 +31,8 @@ final class GameScene: SKScene {
     private var hudClock: Double = 0
     private var drawnRevision = -1
     private var tile: CGFloat = 10
-    private var inputOrigin: CGPoint?
     private var activeTouch: UITouch?
-    private var stick = SKShapeNode(circleOfRadius: 32)
-    private let knob = SKShapeNode(circleOfRadius: 13)
+    private let touchMarker = SKShapeNode(circleOfRadius: 10)
     var haptics = true
 
     init(engine: GameEngine) {
@@ -50,11 +48,10 @@ final class GameScene: SKScene {
         view.preferredFramesPerSecond = 120
         guard board.parent == nil else { return }
         addChild(board)
-        stick.strokeColor = UIColor(hex: 0x56745D).withAlphaComponent(0.35)
-        stick.fillColor = .white.withAlphaComponent(0.5)
-        stick.lineWidth = 2; stick.zPosition = 100; stick.isHidden = true
-        knob.fillColor = UIColor(hex: 0x315E44).withAlphaComponent(0.65)
-        knob.strokeColor = .clear; stick.addChild(knob); addChild(stick)
+        touchMarker.strokeColor = UIColor(hex: 0x315E44).withAlphaComponent(0.5)
+        touchMarker.fillColor = .white.withAlphaComponent(0.2)
+        touchMarker.lineWidth = 2; touchMarker.zPosition = 100; touchMarker.isHidden = true
+        addChild(touchMarker)
         buildBoard()
     }
     override func didChangeSize(_ oldSize: CGSize) {
@@ -222,7 +219,8 @@ final class GameScene: SKScene {
         let dt = lastTime == 0 ? 0 : min(currentTime - lastTime, 0.08)
         lastTime = currentTime
         guard !frozen else { return }
-        engine.update(dt: dt, direction: steering, heading: heading)
+        if let touch = activeTouch { updateTouchTarget(at: touch.location(in: self)) }
+        engine.update(dt: dt, direction: steering, target: touchTarget)
         redrawTerritories(); drawPlayers()
         let events = engine.events; engine.events.removeAll()
         for event in events {
@@ -245,22 +243,30 @@ final class GameScene: SKScene {
         label.run(.sequence([.group([.moveBy(x: 0, y: 35, duration: 0.9), .fadeOut(withDuration: 0.9)]), .removeFromParent()]))
     }
 
+    /// Convert through the board transform so targeting survives resizing and rotation.
+    func gamePoint(at sceneLocation: CGPoint) -> GamePoint {
+        let location = board.convert(sceneLocation, from: self)
+        return GamePoint(x: Double(location.x / tile) - 0.5, y: Double(location.y / tile) - 0.5)
+    }
+
+    private func updateTouchTarget(at location: CGPoint) {
+        touchTarget = gamePoint(at: location)
+        touchMarker.position = location
+        touchMarker.isHidden = false
+        steering = nil
+    }
+
     func clearInput() {
-        steering = nil; heading = nil; inputOrigin = nil; activeTouch = nil; stick.isHidden = true
+        steering = nil; touchTarget = nil; activeTouch = nil; touchMarker.isHidden = true
     }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard !frozen, activeTouch == nil, let touch = touches.first else { return }
-        activeTouch = touch; inputOrigin = touch.location(in: self)
-        stick.position = inputOrigin!; stick.isHidden = false; knob.position = .zero
+        activeTouch = touch
+        updateTouchTarget(at: touch.location(in: self))
     }
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = activeTouch, touches.contains(touch), let origin = inputOrigin, !frozen else { return }
-        let location = touch.location(in: self)
-        let dx = location.x - origin.x, dy = location.y - origin.y
-        let length = hypot(dx, dy)
-        knob.position = CGPoint(x: dx * min(1, 24 / max(1, length)), y: dy * min(1, 24 / max(1, length)))
-        heading = GamePoint.joystick(dx: Double(dx), dy: Double(dy))
-        steering = nil
+        guard let touch = activeTouch, touches.contains(touch), !frozen else { return }
+        updateTouchTarget(at: touch.location(in: self))
     }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         if let touch = activeTouch, touches.contains(touch) { clearInput() }

@@ -23,10 +23,6 @@ struct GamePoint: Equatable {
         guard length > 0.000001 else { return nil }
         return GamePoint(x: x / length, y: y / length)
     }
-    static func joystick(dx: Double, dy: Double) -> GamePoint? {
-        guard hypot(dx, dy) >= 7 else { return nil }
-        return GamePoint(x: dx, y: dy).normalized
-    }
 }
 
 enum Direction: CaseIterable {
@@ -45,15 +41,6 @@ enum Direction: CaseIterable {
         default: return 0
         }
     }
-    var stepLength: Double { dx != 0 && dy != 0 ? sqrt(2) : 1 }
-
-    /// Snap the joystick to eight equal 45-degree sectors, with a small dead zone.
-    static func steering(dx: Double, dy: Double) -> Direction? {
-        guard hypot(dx, dy) >= 7 else { return nil }
-        let sector = Int((atan2(dy, dx) / (.pi / 4)).rounded())
-        return [Direction.right, .upRight, .up, .upLeft, .left, .downLeft, .down, .downRight][(sector + 8) % 8]
-    }
-
     static func between(_ a: Cell, _ b: Cell) -> Direction {
         allCases.first { $0.dx == (b.x - a.x).signum() && $0.dy == (b.y - a.y).signum() } ?? .up
     }
@@ -152,7 +139,7 @@ final class GameEngine {
         }}
     }
 
-    func update(dt: Double, direction: Direction? = nil, heading: GamePoint? = nil) {
+    func update(dt: Double, direction: Direction? = nil, heading: GamePoint? = nil, target: GamePoint? = nil) {
         guard !finished else { return }
         let delta = min(max(dt, 0), 0.08)
         elapsed += delta
@@ -163,7 +150,15 @@ final class GameEngine {
             player.protection = max(0, player.protection - delta)
             let speed = player.id == 0 ? 18.0 : min(14.6, 10.0 + Double(level) * 0.6)
             if player.id == 0 {
-                if let input { _ = advance(player, heading: input, distance: speed * delta) }
+                if let target {
+                    // Recompute from the fruit on every frame, even when the finger is still.
+                    let offset = GamePoint(x: target.x - player.location.x, y: target.y - player.location.y)
+                    if let heading = offset.normalized {
+                        _ = advance(player, heading: heading, distance: min(speed * delta, offset.length))
+                    }
+                } else if let input {
+                    _ = advance(player, heading: input, distance: speed * delta)
+                }
             } else {
                 if player.route.isEmpty { planBot(player) }
                 var remaining = speed * delta

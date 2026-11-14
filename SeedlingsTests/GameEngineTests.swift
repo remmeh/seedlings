@@ -92,18 +92,6 @@ final class GameEngineTests: XCTestCase {
         }
     }
 
-    func testJoystickSelectsEightSectorsAndStopsInDeadZone() {
-        XCTAssertNil(Direction.steering(dx: 3, dy: 3))
-        XCTAssertNil(Direction.steering(dx: 0, dy: 0))
-        for direction in Direction.allCases {
-            XCTAssertEqual(Direction.steering(dx: Double(direction.dx) * 20,
-                                              dy: Double(direction.dy) * 20), direction)
-        }
-        XCTAssertEqual(Direction.steering(dx: 20, dy: 5), .right)
-        XCTAssertEqual(Direction.steering(dx: 20, dy: 10), .upRight)
-        XCTAssertEqual(Direction.steering(dx: -5, dy: -20), .down)
-    }
-
     func testMotionIsContinuousAndUsesTheActualDragAngle() {
         let engine = fixture()
         let player = engine.players[0]
@@ -162,11 +150,53 @@ final class GameEngineTests: XCTestCase {
         XCTAssertTrue(player.visualTrail.isEmpty)
     }
 
-    func testJoystickPreservesAngleAndDeadZone() {
-        XCTAssertNil(GamePoint.joystick(dx: 3, dy: 3))
-        let heading = GamePoint.joystick(dx: 30, dy: 10)!
-        XCTAssertEqual(heading.length, 1, accuracy: 0.000001)
-        XCTAssertEqual(heading.x / heading.y, 3, accuracy: 0.000001)
+    func testStationaryFingerAttractsFruitAndStopsWithoutOvershoot() {
+        let engine = fixture()
+        let target = GamePoint(x: 6.2, y: 4.1)
+        engine.update(dt: 1.0 / 120, target: target)
+        XCTAssertGreaterThan(engine.players[0].location.x, 2)
+        for _ in 0..<120 { engine.update(dt: 1.0 / 120, target: target) }
+        XCTAssertEqual(engine.players[0].location.x, target.x, accuracy: 0.000001)
+        XCTAssertEqual(engine.players[0].location.y, target.y, accuracy: 0.000001)
+        let arrived = engine.players[0].location
+        for _ in 0..<60 { engine.update(dt: 1.0 / 60, target: target) }
+        XCTAssertEqual(engine.players[0].location, arrived)
+    }
+
+    func testFingerMovementRecomputesHeadingFromFruit() {
+        let engine = fixture()
+        engine.update(dt: 0.02, target: GamePoint(x: 8, y: 2))
+        let before = engine.players[0].location
+        engine.update(dt: 0.02, target: GamePoint(x: before.x, y: 8))
+        XCTAssertEqual(engine.players[0].location.x, before.x, accuracy: 0.000001)
+        XCTAssertEqual(engine.players[0].location.y - before.y, 0.36, accuracy: 0.000001)
+    }
+
+    func testCloseFingerTargetAndReleaseDoNotDrift() {
+        let engine = fixture()
+        let target = GamePoint(x: 2.01, y: 2.02)
+        engine.update(dt: 0.08, target: target)
+        XCTAssertEqual(engine.players[0].location.x, target.x, accuracy: 0.000001)
+        XCTAssertEqual(engine.players[0].location.y, target.y, accuracy: 0.000001)
+        let stopped = engine.players[0].location
+        for _ in 0..<10 { engine.update(dt: 0.08) }
+        XCTAssertEqual(engine.players[0].location, stopped)
+    }
+
+    @MainActor
+    func testFingerCoordinatesMapToBoardAfterResize() {
+        let scene = GameScene(engine: fixture())
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 1194, height: 834))
+        view.presentScene(scene)
+        for size in [CGSize(width: 1194, height: 834), CGSize(width: 834, height: 1194)] {
+            scene.size = size
+            let tile = min((size.width - 34) / CGFloat(GameEngine.width), (size.height - 42) / CGFloat(GameEngine.height))
+            let origin = CGPoint(x: (size.width - CGFloat(GameEngine.width) * tile) / 2,
+                                 y: (size.height - CGFloat(GameEngine.height) * tile) / 2)
+            let target = scene.gamePoint(at: CGPoint(x: origin.x + 20.75 * tile, y: origin.y + 12.25 * tile))
+            XCTAssertEqual(target.x, 20.25, accuracy: 0.000001)
+            XCTAssertEqual(target.y, 11.75, accuracy: 0.000001)
+        }
     }
 
     func testDiagonalLoopCapturesInteriorAndTrail() {
