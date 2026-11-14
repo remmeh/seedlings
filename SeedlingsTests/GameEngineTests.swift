@@ -150,6 +150,113 @@ final class GameEngineTests: XCTestCase {
         XCTAssertTrue(player.visualTrail.isEmpty)
     }
 
+    private func shorelineFixture() -> GameEngine {
+        let engine = fixture()
+        engine.owners = Dictionary(uniqueKeysWithValues: engine.land.map { ($0, 0) })
+        engine.owners[Cell(x: 0, y: 0)] = nil
+        return engine
+    }
+
+    func testFruitSlidesAlongFlatShoreAtDifferentFrameRates() {
+        var ends: [GamePoint] = []
+        for fps in [30, 60, 120] {
+            let engine = shorelineFixture()
+            let player = engine.players[0]
+            player.position = Cell(x: 11, y: 3)
+            for _ in 0..<(fps / 2) {
+                engine.update(dt: 1.0 / Double(fps), heading: GamePoint(x: 1, y: 1))
+                XCTAssertTrue(engine.land.contains(player.location.cell))
+                XCTAssertEqual(player.location.cell, player.position)
+            }
+            XCTAssertGreaterThan(player.location.y, 9)
+            XCTAssertLessThan(player.location.x, 11.5)
+            ends.append(player.location)
+        }
+        XCTAssertEqual(ends[0].y, ends[2].y, accuracy: 0.05)
+        XCTAssertEqual(ends[0].x, ends[2].x, accuracy: 0.05)
+    }
+
+    func testFruitSlidesPastStaircaseShoreWithoutLeavingLand() {
+        let engine = shorelineFixture()
+        engine.land = Set((0..<64).flatMap { x in (0..<64).compactMap { y in
+            x + y <= 50 ? Cell(x: x, y: y) : nil
+        } })
+        engine.owners = Dictionary(uniqueKeysWithValues: engine.land.map { ($0, 0) })
+        engine.owners[Cell(x: 0, y: 0)] = nil
+        let player = engine.players[0]
+        player.position = Cell(x: 20, y: 29)
+        for _ in 0..<120 {
+            engine.update(dt: 1.0 / 120, target: GamePoint(x: 70, y: 50))
+            XCTAssertTrue(engine.land.contains(player.location.cell))
+            XCTAssertEqual(player.location.cell, player.position)
+        }
+        XCTAssertGreaterThan(player.location.x, 24)
+        XCTAssertLessThan(player.location.y, 28)
+        XCTAssertTrue(player.trail.isEmpty)
+    }
+
+    func testSlidingAlongGeneratedIslandShore() {
+        for seed in UInt64(1)...UInt64(5) {
+            let engine = GameEngine(seed: seed)
+            let player = engine.players[0]
+            engine.players = [player]
+            engine.owners = Dictionary(uniqueKeysWithValues: engine.land.map { ($0, 0) })
+            engine.owners[Cell(x: 64, y: 48)] = nil
+            let start = engine.land.max { a, b in a.x == b.x ? a.y < b.y : a.x < b.x }!
+            player.position = start
+            for _ in 0..<120 {
+                let before = player.location
+                engine.update(dt: 1.0 / 60, target: GamePoint(x: 200, y: 200))
+                XCTAssertTrue(engine.land.contains(player.location.cell))
+                XCTAssertLessThanOrEqual(hypot(player.location.x - before.x, player.location.y - before.y), 18.0 / 60 + 0.000001)
+            }
+            XCTAssertGreaterThan(player.location.y, Double(start.y) + 5, "Shoreline seed \(seed) must keep sliding")
+        }
+    }
+
+    func testPointingStraightOutwardStopsStablyAndCanTurnBackIn() {
+        let engine = shorelineFixture()
+        let player = engine.players[0]
+        player.position = Cell(x: 11, y: 5)
+        for _ in 0..<30 { engine.update(dt: 1.0 / 60, direction: .right) }
+        let stopped = player.location
+        for _ in 0..<30 { engine.update(dt: 1.0 / 60, direction: .right) }
+        XCTAssertEqual(player.location.x, stopped.x, accuracy: 0.00001)
+        XCTAssertEqual(player.location.y, stopped.y, accuracy: 0.00001)
+        for _ in 0..<10 { engine.update(dt: 1.0 / 60, target: GamePoint(x: 2, y: 5)) }
+        XCTAssertLessThan(player.location.x, 9)
+    }
+
+    func testTimerEndsRoundAtSixtySecondsWithoutAllocatingNeutralLand() {
+        let engine = fixture(twoPlayers: true)
+        let owners = engine.owners
+        engine.elapsed = 59.97
+        engine.update(dt: 0.08)
+        XCTAssertTrue(engine.finished)
+        XCTAssertEqual(engine.elapsed, 60, accuracy: 0.000001)
+        XCTAssertEqual(engine.timeRemaining, 0)
+        XCTAssertEqual(engine.owners, owners)
+        XCTAssertEqual(engine.leader, 0)
+        let position = engine.players[0].location
+        engine.update(dt: 0.08, direction: .right)
+        XCTAssertEqual(engine.players[0].location, position)
+        XCTAssertEqual(engine.events.filter { if case .finished = $0 { return true }; return false }.count, 1)
+    }
+
+    func testTimerDeclaresRivalWinnerAndDoesNotFinishBeforeDeadline() {
+        let engine = fixture(twoPlayers: true)
+        engine.owners = Dictionary(uniqueKeysWithValues: engine.land.filter { $0.y < 5 }.map { ($0, 1) })
+        engine.owners[engine.players[0].position] = 0
+        engine.elapsed = 59.9
+        engine.update(dt: 0.04)
+        XCTAssertFalse(engine.finished)
+        XCTAssertGreaterThan(engine.timeRemaining, 0)
+        engine.elapsed = 60
+        engine.update(dt: 0)
+        XCTAssertTrue(engine.finished)
+        XCTAssertEqual(engine.leader, 1)
+    }
+
     func testStationaryFingerAttractsFruitAndStopsWithoutOvershoot() {
         let engine = fixture()
         let target = GamePoint(x: 6.2, y: 4.1)
@@ -256,7 +363,7 @@ final class GameEngineTests: XCTestCase {
         XCTAssertEqual(engine.leader, 0)
     }
 
-    func testNoRoundEndUntilEveryCellIsAllocated() {
+    func testRoundCanFinishEarlyWhenEveryCellIsAllocated() {
         let engine = fixture()
         engine.owners = Dictionary(uniqueKeysWithValues: engine.land.map { ($0, 0) })
         let last = Cell(x: 11, y: 11)
@@ -339,6 +446,8 @@ final class GameEngineTests: XCTestCase {
         XCTAssertTrue(Set(engine.owners.keys).isSubset(of: engine.land))
         XCTAssertTrue(engine.owners.values.allSatisfy { (0..<4).contains($0) })
         XCTAssertTrue(engine.players.allSatisfy { engine.land.contains($0.position) })
-        XCTAssertGreaterThan(engine.fractionAllocated, 0.5)
+        XCTAssertGreaterThan(engine.fractionAllocated, 0.1)
+        XCTAssertTrue(engine.finished)
+        XCTAssertEqual(engine.elapsed, GameEngine.roundDuration, accuracy: 0.000001)
     }
 }

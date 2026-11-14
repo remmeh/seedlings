@@ -7,6 +7,7 @@ final class GameSession: ObservableObject {
     @Published var selectedFruit: Fruit = .watermelon
     @Published var scores: [Int] = [0, 0, 0, 0]
     @Published var allocated: Double = 0
+    @Published var timeRemaining: Double = GameEngine.roundDuration
     @Published var leader = 0
     @Published var paused = false
     @Published var complete = false
@@ -49,6 +50,7 @@ final class GameSession: ObservableObject {
     func refresh() {
         guard let engine else { return }
         scores = engine.counts; allocated = engine.fractionAllocated; leader = engine.leader
+        timeRemaining = engine.timeRemaining
     }
 
     func setPaused(_ value: Bool) {

@@ -120,8 +120,15 @@ struct ContentView: View {
             VStack {
                 HStack(alignment: .top, spacing: 16) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("ISLAND \(session.level)")
-                            .font(.system(size: 10, weight: .heavy, design: .rounded)).tracking(2)
+                        HStack {
+                            Text("ISLAND \(session.level)")
+                                .font(.system(size: 10, weight: .heavy, design: .rounded)).tracking(2)
+                            Spacer()
+                            Label(countdown, systemImage: "timer")
+                                .font(.system(size: 15, weight: .heavy, design: .rounded)).monospacedDigit()
+                                .foregroundStyle(session.timeRemaining <= 10 ? Color.red : Color.ink)
+                                .accessibilityLabel("\(Int(ceil(session.timeRemaining))) seconds remaining")
+                        }
                         HStack(spacing: 12) {
                             ForEach(ranked, id: \.self) { id in
                                 HStack(spacing: 4) {
@@ -188,6 +195,11 @@ struct ContentView: View {
             .accessibilityElement(children: .combine)
     }
 
+    private var countdown: String {
+        let seconds = Int(ceil(session.timeRemaining))
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
     private func percentage(_ id: Int) -> Double {
         Double(session.scores[id]) * 100 / Double(max(session.engine?.land.count ?? 1, 1))
     }
@@ -251,9 +263,9 @@ struct ContentView: View {
         overlay {
             VStack(spacing: 17) {
                 Image(systemName: "crown.fill").font(.system(size: 45)).foregroundStyle(.orange)
-                Text(session.leader == 0 ? "A fruitful victory!" : "A lovely little harvest.")
+                Text(session.leader == 0 ? "A fruitful victory!" : "\(session.engine?.players[session.leader].fruit.name ?? "A rival") wins!")
                     .font(.system(size: 31, weight: .heavy, design: .rounded))
-                Text("Every patch has a home. You claimed \(percentage(0), specifier: "%.1f")% of the island.")
+                Text("\(session.timeRemaining <= 0 ? "Time’s up!" : "Every patch has a home.") You claimed \(percentage(0), specifier: "%.1f")% of the island.")
                     .font(.system(size: 15, weight: .medium, design: .rounded)).multilineTextAlignment(.center).foregroundStyle(Color.moss)
                 VStack(spacing: 6) { ForEach(ranked, id: \.self) { id in scoreRow(id) } }
                 primaryButton("A fresh island →") { session.start(level: session.level + 1) }
@@ -287,7 +299,7 @@ struct ContentView: View {
                     helpRow("hand.draw.fill", "1. Find your feet", "Touch and hold anywhere on the island. Your fruit moves toward your finger, and follows as you move it. It stops when it reaches your finger or you lift it. Tap Controls to show the arrow buttons.")
                     helpRow("point.topleft.down.to.point.bottomright.curvepath", "2. Make a loop", "Leave your colored patch to draw a seed trail. Return to your territory to claim the trail and everything enclosed—even another fruit's land.")
                     helpRow("scissors", "3. Protect your trail", "Cross a rival's exposed trail to snip it. If yours gets cut, or you cross your own trail, you return home. Your existing land stays yours.")
-                    helpRow("crown.fill", "4. Wear the crown", "The fruit with the most land wears the crown. The round ends only when 100% of the island is claimed. The biggest kingdom wins; ties favor You, then the listed rival order.")
+                    helpRow("crown.fill", "4. Wear the crown", "The fruit with the most land wears the crown. You have 60 seconds. The round ends when time runs out or 100% of the island is claimed. The biggest kingdom wins; ties favor You, then the listed rival order.")
                     Text("Each fresh island is a new organic shape on the same-sized canvas. This prototype is an offline game with three computer-controlled rivals.")
                         .font(.system(size: 13, weight: .medium, design: .rounded)).foregroundStyle(Color.moss)
                 }.padding(30)

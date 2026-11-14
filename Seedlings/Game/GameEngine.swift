@@ -89,6 +89,7 @@ enum GameEvent {
 
 /// Pure Foundation rules. Coordinates are fixed-size cells, independent of screen size.
 final class GameEngine {
+    static let roundDuration: Double = 60
     static let width = 128
     static let height = 96
     let level: Int
@@ -124,6 +125,7 @@ final class GameEngine {
     }
     /// A tied lead keeps the crown on the lower ID, consistently across frames.
     var leader: Int { counts.enumerated().max { a, b in a.element == b.element ? a.offset > b.offset : a.element < b.element }?.offset ?? 0 }
+    var timeRemaining: Double { max(0, Self.roundDuration - elapsed) }
     var fractionAllocated: Double { Double(owners.count) / Double(max(land.count, 1)) }
     func percentage(_ id: Int) -> Double { Double(counts[id]) * 100 / Double(max(land.count, 1)) }
     func distance(_ a: Cell, _ b: Cell) -> Int { abs(a.x - b.x) + abs(a.y - b.y) }
@@ -141,7 +143,7 @@ final class GameEngine {
 
     func update(dt: Double, direction: Direction? = nil, heading: GamePoint? = nil, target: GamePoint? = nil) {
         guard !finished else { return }
-        let delta = min(max(dt, 0), 0.08)
+        let delta = min(max(dt, 0), 0.08, timeRemaining)
         elapsed += delta
         let input = heading?.normalized ?? direction.flatMap {
             GamePoint(x: Double($0.dx), y: Double($0.dy)).normalized
@@ -178,7 +180,7 @@ final class GameEngine {
                 }
             }
         }
-        if owners.count == land.count {
+        if owners.count == land.count || timeRemaining == 0 {
             finished = true; events.append(.finished)
         }
     }
@@ -191,7 +193,9 @@ final class GameEngine {
         let stride = distance / Double(steps)
         for _ in 0..<steps {
             let origin = player.location
-            let next = GamePoint(x: origin.x + heading.x * stride, y: origin.y + heading.y * stride)
+            let desired = GamePoint(x: origin.x + heading.x * stride, y: origin.y + heading.y * stride)
+            let next = player.id == 0 ? slideAlongShore(from: origin, to: desired) : desired
+            if next == origin { continue }
             if next.cell != player.position {
                 let oldTrace = player.visualTrail
                 let wasHome = player.trail.isEmpty
@@ -205,6 +209,79 @@ final class GameEngine {
             }
         }
         return true
+    }
+
+    /// A smooth occupancy contour rounds the grid's tiny shoreline steps. Its inward
+    /// normal lets us remove only blocked motion, preserving travel along the bank.
+    private func shoreCoverage(_ point: GamePoint) -> Double {
+        func weight(_ distance: Double) -> Double {
+            let d = abs(distance)
+            if d < 0.5 { return 0.75 - d * d }
+            if d < 1.5 { return 0.5 * (1.5 - d) * (1.5 - d) }
+            return 0
+        }
+        var coverage = 0.0
+        let x = Int(floor(point.x)), y = Int(floor(point.y))
+        for cx in (x - 1)...(x + 2) {
+            for cy in (y - 1)...(y + 2) where land.contains(Cell(x: cx, y: cy)) {
+                coverage += weight(point.x - Double(cx)) * weight(point.y - Double(cy))
+            }
+        }
+        return coverage
+    }
+
+    private func slideAlongShore(from origin: GamePoint, to desired: GamePoint) -> GamePoint {
+        // Keep a small inset so sliding clears individual cell corners. Starting on a
+        // thin foothold is allowed; movement must not reduce its existing clearance.
+        let clearance = min(0.76, shoreCoverage(origin))
+        func allowed(_ point: GamePoint) -> Bool {
+            land.contains(point.cell) && shoreCoverage(point) >= clearance - 0.000000001
+        }
+        var location = origin
+        var motion = GamePoint(x: desired.x - origin.x, y: desired.y - origin.y)
+        for _ in 0..<3 {
+            let end = GamePoint(x: location.x + motion.x, y: location.y + motion.y)
+            if allowed(end) { return end }
+            // Sweep to contact rather than dropping the entire frame's movement.
+            var low = 0.0, high = 1.0
+            for _ in 0..<14 {
+                let mid = (low + high) / 2
+                let point = GamePoint(x: location.x + motion.x * mid, y: location.y + motion.y * mid)
+                if allowed(point) { low = mid } else { high = mid }
+            }
+            location = GamePoint(x: location.x + motion.x * low, y: location.y + motion.y * low)
+            let epsilon = 0.01
+            let gradient = GamePoint(
+                x: shoreCoverage(GamePoint(x: location.x + epsilon, y: location.y)) - shoreCoverage(GamePoint(x: location.x - epsilon, y: location.y)),
+                y: shoreCoverage(GamePoint(x: location.x, y: location.y + epsilon)) - shoreCoverage(GamePoint(x: location.x, y: location.y - epsilon)))
+            guard let normal = gradient.normalized else { return location }
+            motion = GamePoint(x: motion.x * (1 - low), y: motion.y * (1 - low))
+            let inward = motion.x * normal.x + motion.y * normal.y
+            if inward < 0 {
+                motion.x -= inward * normal.x
+                motion.y -= inward * normal.y
+            }
+            if motion.length < 0.000001 { break }
+            // A tangent to a curved bank can end just outside it. Project that
+            // endpoint back onto the contour so curvature doesn't cause sticking.
+            var candidate = GamePoint(x: location.x + motion.x, y: location.y + motion.y)
+            for _ in 0..<6 {
+                let displacement = GamePoint(x: candidate.x - origin.x, y: candidate.y - origin.y)
+                if allowed(candidate) {
+                    let scale = min(1, hypot(desired.x - origin.x, desired.y - origin.y) / max(displacement.length, 0.000001))
+                    let bounded = GamePoint(x: origin.x + displacement.x * scale, y: origin.y + displacement.y * scale)
+                    if allowed(bounded) { return bounded }
+                }
+                let gradient = GamePoint(
+                    x: (shoreCoverage(GamePoint(x: candidate.x + epsilon, y: candidate.y)) - shoreCoverage(GamePoint(x: candidate.x - epsilon, y: candidate.y))) / (2 * epsilon),
+                    y: (shoreCoverage(GamePoint(x: candidate.x, y: candidate.y + epsilon)) - shoreCoverage(GamePoint(x: candidate.x, y: candidate.y - epsilon))) / (2 * epsilon))
+                guard let inward = gradient.normalized else { break }
+                let correction = min(0.1, max(0.0000001, clearance - shoreCoverage(candidate) + 0.0000001) / gradient.length)
+                candidate.x += inward.x * correction
+                candidate.y += inward.y * correction
+            }
+        }
+        return location
     }
 
     @discardableResult
@@ -339,7 +416,7 @@ final class GameEngine {
             }
         }
         // Find a remaining neutral tile (even in narrow bays), then return by a
-        // different path so the last few cells can be claimed without a timer.
+        // different path so the last few neutral cells can still be claimed.
         let targets = land.filter { owners[$0] == nil }.sorted { distance($0, player.position) < distance($1, player.position) }
         for target in targets.prefix(16) {
             guard let out = shortestPath(from: player.position, to: target, allowed: { _ in true }) else { continue }
