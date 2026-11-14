@@ -13,7 +13,7 @@ struct ContentView: View {
     init(session: GameSession = GameSession()) {
         _session = StateObject(wrappedValue: session)
     }
-    @State private var showDirectionPad = false
+    @State private var showJoystick = true
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         GeometryReader { geometry in
@@ -114,6 +114,7 @@ struct ContentView: View {
     private func game(_ scene: GameScene) -> some View {
         ZStack {
             SpriteView(scene: scene, preferredFramesPerSecond: 120)
+                .id(ObjectIdentifier(scene))
                 .ignoresSafeArea()
                 .accessibilityLabel("Island game board")
                 .accessibilityHint("Touch and hold anywhere. Your fruit follows your finger. Lift to stop.")
@@ -158,9 +159,9 @@ struct ContentView: View {
                         .allowsHitTesting(false)
                     Spacer()
                     VStack(alignment: .trailing, spacing: 12) {
-                        if showDirectionPad { directionButtons(scene) }
-                        Button { showDirectionPad.toggle() } label: {
-                            Label(showDirectionPad ? "Hide controls" : "Controls", systemImage: "dpad")
+                        if showJoystick { GameJoystick(scene: scene) }
+                        Button { scene.clearInput(); showJoystick.toggle() } label: {
+                            Label(showJoystick ? "Hide joystick" : "Joystick", systemImage: "l.joystick")
                                 .font(.system(size: 12, weight: .bold, design: .rounded))
                                 .padding(12).background(.regularMaterial, in: Capsule())
                         }.buttonStyle(.plain)
@@ -204,40 +205,6 @@ struct ContentView: View {
         Double(session.scores[id]) * 100 / Double(max(session.engine?.land.count ?? 1, 1))
     }
 
-    private func directionButtons(_ scene: GameScene) -> some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 4) {
-                directionButton(.upLeft, symbol: "arrow.up.left", scene: scene)
-                directionButton(.up, symbol: "arrow.up", scene: scene)
-                directionButton(.upRight, symbol: "arrow.up.right", scene: scene)
-            }
-            HStack(spacing: 4) {
-                directionButton(.left, symbol: "arrow.left", scene: scene)
-                Color.clear.frame(width: 44, height: 44)
-                directionButton(.right, symbol: "arrow.right", scene: scene)
-            }
-            HStack(spacing: 4) {
-                directionButton(.downLeft, symbol: "arrow.down.left", scene: scene)
-                directionButton(.down, symbol: "arrow.down", scene: scene)
-                directionButton(.downRight, symbol: "arrow.down.right", scene: scene)
-            }
-        }
-    }
-
-    private func directionButton(_ direction: Direction, symbol: String, scene: GameScene) -> some View {
-        Button {
-            guard !scene.frozen else { return }
-            scene.engine.move(scene.engine.players[0], to: scene.engine.players[0].position.moved(direction))
-        } label: {
-            Image(systemName: symbol).font(.system(size: 14, weight: .bold))
-                .frame(width: 44, height: 44).background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 13))
-        }.buttonStyle(.plain)
-            .simultaneousGesture(DragGesture(minimumDistance: 0)
-                .onChanged { _ in if !scene.frozen { scene.clearInput(); scene.steering = direction } }
-                .onEnded { _ in scene.steering = nil })
-            .accessibilityLabel("Move \(symbol.replacingOccurrences(of: "arrow.", with: "").replacingOccurrences(of: ".", with: " "))")
-    }
-
     private func iconButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: 15, weight: .bold))
@@ -250,10 +217,11 @@ struct ContentView: View {
             VStack(spacing: 20) {
                 Text("A little breather.").font(.system(size: 34, weight: .heavy, design: .rounded))
                 Text("Your island can wait.").foregroundStyle(Color.moss)
+                Toggle("Sound effects", isOn: $session.soundEnabled).tint(Color.moss)
                 Toggle("Gentle haptics", isOn: $session.haptics).tint(Color.moss)
                     .onChange(of: session.haptics) { _, enabled in session.scene?.haptics = enabled }
                 primaryButton("Back to growing") { session.setPaused(false) }
-                Button("Start this island over") { session.start(level: session.level) }.fontWeight(.semibold)
+                Button("Start this island over") { session.restart() }.fontWeight(.semibold)
                 Button("Back to the garden") { session.menu() }.foregroundStyle(Color.moss)
             }
         }
@@ -296,7 +264,7 @@ struct ContentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     Text("Little loops.\nBig possibilities.").font(.system(size: 36, weight: .heavy, design: .rounded))
-                    helpRow("hand.draw.fill", "1. Find your feet", "Touch and hold anywhere on the island. Your fruit moves toward your finger, and follows as you move it. It stops when it reaches your finger or you lift it. Tap Controls to show the arrow buttons.")
+                    helpRow("hand.draw.fill", "1. Find your feet", "Touch and hold anywhere on the island. Your fruit moves toward your finger, and follows as you move it. It stops when it reaches your finger or you lift it. You can also steer in any direction with the joystick. Release it to stop.")
                     helpRow("point.topleft.down.to.point.bottomright.curvepath", "2. Make a loop", "Leave your colored patch to draw a seed trail. Return to your territory to claim the trail and everything enclosed—even another fruit's land.")
                     helpRow("scissors", "3. Protect your trail", "Cross a rival's exposed trail to snip it. If yours gets cut, or you cross your own trail, you return home. Your existing land stays yours.")
                     helpRow("crown.fill", "4. Wear the crown", "The fruit with the most land wears the crown. You have 60 seconds. The round ends when time runs out or 100% of the island is claimed. The biggest kingdom wins; ties favor You, then the listed rival order.")
@@ -316,5 +284,47 @@ struct ContentView: View {
                 Text(text).font(.system(size: 15, weight: .medium, design: .rounded)).lineSpacing(4).foregroundStyle(Color.moss)
             }
         }
+    }
+}
+
+/// Directional steering is separate from touching a destination on the arena.
+private struct GameJoystick: View {
+    let scene: GameScene
+    @State private var offset = CGSize.zero
+    var body: some View {
+        ZStack {
+            Circle().fill(.regularMaterial)
+            Circle().stroke(Color.moss.opacity(0.25), lineWidth: 2).padding(5)
+            Circle().stroke(Color.moss.opacity(0.15), lineWidth: 1).padding(31)
+            Circle().fill(Color.ink.opacity(0.8)).frame(width: 48, height: 48)
+                .overlay(Circle().stroke(.white.opacity(0.5), lineWidth: 2))
+                .offset(offset)
+        }
+        .frame(width: 136, height: 136)
+        .contentShape(Circle())
+        .gesture(DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard !scene.frozen else { return }
+                let dx = value.location.x - 68, dy = value.location.y - 68
+                let length = hypot(dx, dy)
+                let scale = min(1, 40 / max(length, 1))
+                offset = CGSize(width: dx * scale, height: dy * scale)
+                scene.steer(with: GamePoint.joystick(dx: Double(dx), dy: -Double(dy)))
+            }
+            .onEnded { _ in offset = .zero; scene.steer(with: nil) })
+        .onChange(of: scene.frozen) { _, frozen in if frozen { offset = .zero } }
+        .onDisappear { scene.steer(with: nil) }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Movement joystick")
+        .accessibilityHint("Drag from the center to steer. Release to stop.")
+        .accessibilityAction(named: Text("Move up")) { move(.up) }
+        .accessibilityAction(named: Text("Move down")) { move(.down) }
+        .accessibilityAction(named: Text("Move left")) { move(.left) }
+        .accessibilityAction(named: Text("Move right")) { move(.right) }
+    }
+    private func move(_ direction: Direction) {
+        guard !scene.frozen else { return }
+        let player = scene.engine.players[0]
+        scene.engine.move(player, to: player.position.moved(direction))
     }
 }

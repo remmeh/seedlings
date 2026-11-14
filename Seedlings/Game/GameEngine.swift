@@ -23,6 +23,11 @@ struct GamePoint: Equatable {
         guard length > 0.000001 else { return nil }
         return GamePoint(x: x / length, y: y / length)
     }
+    static func joystick(dx: Double, dy: Double) -> GamePoint? {
+        guard hypot(dx, dy) >= 7 else { return nil }
+        return GamePoint(x: dx, y: dy).normalized
+    }
+
 }
 
 enum Direction: CaseIterable {
@@ -73,7 +78,8 @@ final class Contestant {
     var previous: Cell
     var trail: [Cell] = []
     var anchor: Cell?
-    var route: [Cell] = []
+    var route: [GamePoint] = []
+    var facing: GamePoint?
     var protection: Double = 0
     init(id: Int, fruit: Fruit, position: Cell) {
         self.id = id; self.fruit = fruit
@@ -165,16 +171,17 @@ final class GameEngine {
                 if player.route.isEmpty { planBot(player) }
                 var remaining = speed * delta
                 while remaining > 0.000001, let target = player.route.first {
-                    guard target == player.position || player.position.isAdjacent(to: target) else {
+                    guard target.cell == player.position || player.position.isAdjacent(to: target.cell) else {
                         player.route = []; break
                     }
-                    let offset = GamePoint(x: Double(target.x) - player.location.x,
-                                           y: Double(target.y) - player.location.y)
+                    let offset = GamePoint(x: target.x - player.location.x,
+                                           y: target.y - player.location.y)
                     guard let heading = offset.normalized else { player.route.removeFirst(); continue }
                     let travel = min(remaining, offset.length)
                     guard advance(player, heading: heading, distance: travel) else {
                         player.route = []; break
                     }
+                    player.facing = heading
                     remaining -= travel
                     if travel >= offset.length - 0.000001, !player.route.isEmpty { player.route.removeFirst() }
                 }
@@ -398,20 +405,51 @@ final class GameEngine {
         return nil
     }
 
-    private func planBot(_ player: Contestant) {
-        // Rectangular excursions form readable, stealable loops.
-        for _ in 0..<32 {
-            let dx = Int.random(in: 8...26, using: &random) * (Bool.random(using: &random) ? 1 : -1)
-            let dy = Int.random(in: 8...22, using: &random) * (Bool.random(using: &random) ? 1 : -1)
-            let origin = player.position
-            let corners = [Cell(x: origin.x + dx, y: origin.y), Cell(x: origin.x + dx, y: origin.y + dy), Cell(x: origin.x, y: origin.y + dy), origin]
-            var path: [Cell] = [], cursor = origin
-            for corner in corners {
-                while cursor != corner {
-                    cursor = cursor.moved(Direction.between(cursor, corner)); path.append(cursor)
-                }
+    /// Round navigation detours as well, retaining the original path in tight bays.
+    private func roundedRoute(_ cells: [Cell]) -> [GamePoint] {
+        guard cells.count > 1 else { return [] }
+        let original = cells.map { GamePoint($0) }
+        var rounded = original
+        for _ in 0..<2 {
+            var next = [rounded[0]]
+            for (a, b) in zip(rounded, rounded.dropFirst()) {
+                next.append(GamePoint(x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25))
+                next.append(GamePoint(x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75))
             }
-            if path.allSatisfy({ land.contains($0) }) && path.contains(where: { owners[$0] != player.id }) {
+            next.append(rounded.last!)
+            rounded = next
+        }
+        let source = rounded.allSatisfy { land.contains($0.cell) } ? rounded : original
+        var result: [GamePoint] = []
+        for (a, b) in zip(source, source.dropFirst()) {
+            let length = hypot(b.x - a.x, b.y - a.y)
+            let steps = max(1, Int(ceil(length / 0.3)))
+            for step in 1...steps {
+                let t = Double(step) / Double(steps)
+                result.append(GamePoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t))
+            }
+        }
+        return result
+    }
+
+    private func planBot(_ player: Contestant) {
+        // Sample rotated ellipses at sub-cell spacing. Match the entry tangent to
+        // the previous heading so consecutive excursions don't turn at right angles.
+        let entry = player.facing.map { atan2($0.y, $0.x) } ?? Double.random(in: 0...(2 * .pi), using: &random)
+        for _ in 0..<32 {
+            let rx = Double.random(in: 5...16, using: &random)
+            let ry = Double.random(in: 5...14, using: &random)
+            let sign = Bool.random(using: &random) ? 1.0 : -1.0
+            let rotation = entry - sign * .pi / 2
+            let segments = Int(ceil(2 * .pi * max(rx, ry) / 0.3))
+            let origin = player.location
+            let path = (1...segments).map { index -> GamePoint in
+                let angle = sign * 2 * .pi * Double(index) / Double(segments)
+                let x = rx * (cos(angle) - 1), y = ry * sin(angle)
+                return GamePoint(x: origin.x + x * cos(rotation) - y * sin(rotation),
+                                 y: origin.y + x * sin(rotation) + y * cos(rotation))
+            }
+            if path.allSatisfy({ land.contains($0.cell) }) && path.contains(where: { owners[$0.cell] != player.id }) {
                 player.route = path; return
             }
         }
@@ -422,14 +460,14 @@ final class GameEngine {
             guard let out = shortestPath(from: player.position, to: target, allowed: { _ in true }) else { continue }
             let blocked = Set(out.dropFirst().dropLast())
             if let back = shortestPath(from: target, to: player.position, allowed: { !blocked.contains($0) }) {
-                player.route = Array(out.dropFirst()) + Array(back.dropFirst()); return
+                player.route = roundedRoute(out + Array(back.dropFirst())); return
             }
         }
         // Reposition on home ground, keeping exposed trails intact until reentry.
         let homes = owners.keys.filter { owners[$0] == player.id }
         if let destination = homes.randomElement(using: &random),
            let path = shortestPath(from: player.position, to: destination, allowed: { !player.trail.contains($0) }) {
-            player.route = Array(path.dropFirst())
+            player.route = roundedRoute(path)
         }
     }
 }

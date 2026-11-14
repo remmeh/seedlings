@@ -1,5 +1,6 @@
 import SpriteKit
 import UIKit
+import AVFoundation
 
 extension Fruit {
     var color: UIColor { [UIColor(hex: 0xE77B86), UIColor(hex: 0xEDB26F), UIColor(hex: 0xA8A3D6), UIColor(hex: 0xA6BF7A)][rawValue] }
@@ -17,9 +18,14 @@ final class GameScene: SKScene {
     let engine: GameEngine
     var onTick: (() -> Void)?
     var onEvent: ((GameEvent) -> Void)?
-    var steering: Direction?
+    var controlHeading: GamePoint?
+    private let sounds: GameSoundPlaying
+    var soundEnabled: Bool {
+        get { sounds.enabled }
+        set { sounds.enabled = newValue }
+    }
     private var touchTarget: GamePoint?
-    var frozen = false
+    var frozen = false { didSet { if frozen { sounds.stopAll() } } }
     private let board = SKNode()
     private var sprites: [Int: SKNode] = [:]
     private var trails: [Int: SKShapeNode] = [:]
@@ -35,8 +41,9 @@ final class GameScene: SKScene {
     private let touchMarker = SKShapeNode(circleOfRadius: 10)
     var haptics = true
 
-    init(engine: GameEngine) {
+    init(engine: GameEngine, sounds: GameSoundPlaying = GameAudio()) {
         self.engine = engine
+        self.sounds = sounds
         super.init(size: CGSize(width: 900, height: 650))
         scaleMode = .resizeFill
         backgroundColor = UIColor(hex: 0xEAF0E5)
@@ -54,6 +61,8 @@ final class GameScene: SKScene {
         addChild(touchMarker)
         buildBoard()
     }
+    override func willMove(from view: SKView) { sounds.stopAll() }
+
     override func didChangeSize(_ oldSize: CGSize) {
         guard board.parent != nil else { return }
         buildBoard()
@@ -127,11 +136,30 @@ final class GameScene: SKScene {
             territories[player.id]?.path = terrainPath(Set(engine.owners.compactMap { $0.value == player.id ? $0.key : nil }))
         }
         marks.removeAllChildren()
-        for (cell, owner) in engine.owners where cell.x % 8 == 0 && cell.y % 8 == 0 {
-            let seed = SKShapeNode(ellipseOf: CGSize(width: tile * 0.25, height: tile * 0.4))
-            seed.fillColor = engine.players[owner].fruit.darkColor.withAlphaComponent(0.42)
-            seed.strokeColor = .clear; seed.zRotation = -0.4; seed.position = point(cell)
-            marks.addChild(seed)
+        for player in engine.players {
+            let pattern = CGMutablePath()
+            for (cell, owner) in engine.owners where owner == player.id && cell.x % 4 == 0 && cell.y % 4 == 0 {
+                // Keep the pattern inside the territory rather than spilling over borders.
+                guard [Direction.up, .right, .down, .left].allSatisfy({ engine.owners[cell.moved($0)] == owner }) else { continue }
+                let seed = CGMutablePath()
+                seed.move(to: CGPoint(x: 0, y: tile * 0.5))
+                seed.addCurve(to: CGPoint(x: 0, y: -tile * 0.45),
+                              control1: CGPoint(x: -tile * 0.55, y: -tile * 0.05),
+                              control2: CGPoint(x: -tile * 0.3, y: -tile * 0.45))
+                seed.addCurve(to: CGPoint(x: 0, y: tile * 0.5),
+                              control1: CGPoint(x: tile * 0.3, y: -tile * 0.45),
+                              control2: CGPoint(x: tile * 0.4, y: -tile * 0.1))
+                seed.closeSubpath()
+                let variation = CGFloat((cell.x * 31 + cell.y * 17) % 11) / 10
+                let center = point(cell)
+                let transform = CGAffineTransform(translationX: center.x, y: center.y)
+                    .rotated(by: -0.6 + variation * 1.2)
+                pattern.addPath(seed, transform: transform)
+            }
+            let seeds = SKShapeNode(path: pattern)
+            seeds.fillColor = player.fruit.darkColor.withAlphaComponent(0.32)
+            seeds.strokeColor = .clear
+            marks.addChild(seeds)
         }
     }
 
@@ -220,15 +248,27 @@ final class GameScene: SKScene {
         lastTime = currentTime
         guard !frozen else { return }
         if let touch = activeTouch { updateTouchTarget(at: touch.location(in: self)) }
-        engine.update(dt: dt, direction: steering, target: touchTarget)
+        let before = engine.players[0].location
+        let previousSeconds = Int(ceil(engine.timeRemaining))
+        engine.update(dt: dt, heading: controlHeading, target: touchTarget)
         redrawTerritories(); drawPlayers()
         let events = engine.events; engine.events.removeAll()
+        let wasCut = events.contains { if case .cut(0) = $0 { return true }; return false }
+        let after = engine.players[0].location
+        sounds.setMoving(!engine.finished && !wasCut && hypot(after.x - before.x, after.y - before.y) > 0.00001)
+        let seconds = Int(ceil(engine.timeRemaining))
+        if seconds < previousSeconds, (1...10).contains(seconds) { sounds.play(.countdown) }
+        if engine.finished { sounds.stopAll() }
         for event in events {
             if case .captured(let id, let amount) = event, id == 0, amount > 0 {
                 showCapture(amount)
+                sounds.play(.capture)
                 if haptics { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
             }
-            if case .cut(let id) = event, id == 0, haptics { UINotificationFeedbackGenerator().notificationOccurred(.warning) }
+            if case .cut(0) = event {
+                sounds.play(.snip)
+                if haptics { UINotificationFeedbackGenerator().notificationOccurred(.warning) }
+            }
             onEvent?(event)
         }
         hudClock += dt
@@ -253,11 +293,18 @@ final class GameScene: SKScene {
         touchTarget = gamePoint(at: location)
         touchMarker.position = location
         touchMarker.isHidden = false
-        steering = nil
+        controlHeading = nil
+    }
+
+    func steer(with heading: GamePoint?) {
+        controlHeading = heading
+        touchTarget = nil; activeTouch = nil; touchMarker.isHidden = true
+        if heading == nil { sounds.setMoving(false) }
     }
 
     func clearInput() {
-        steering = nil; touchTarget = nil; activeTouch = nil; touchMarker.isHidden = true
+        controlHeading = nil; touchTarget = nil; activeTouch = nil; touchMarker.isHidden = true
+        sounds.setMoving(false)
     }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard !frozen, activeTouch == nil, let touch = touches.first else { return }
@@ -272,4 +319,136 @@ final class GameScene: SKScene {
         if let touch = activeTouch, touches.contains(touch) { clearInput() }
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { touchesEnded(touches, with: event) }
+}
+
+// Short synthesized PCM effects keep the game offline and avoid external assets.
+enum GameSound: CaseIterable {
+    case movement, snip, capture, countdown
+    var duration: Double {
+        switch self {
+        case .movement: return 0.48
+        case .snip: return 0.22
+        case .capture: return 0.55
+        case .countdown: return 0.09
+        }
+    }
+}
+
+protocol GameSoundPlaying: AnyObject {
+    var enabled: Bool { get set }
+    func setMoving(_ moving: Bool)
+    func play(_ sound: GameSound)
+    func stopAll()
+}
+
+final class GameAudio: GameSoundPlaying {
+    var enabled = true { didSet { if !enabled { stopAll() } } }
+    private var players: [GameSound: AVAudioPlayer] = [:]
+    private var prepared = false
+    private var interrupted = false
+    private var interruptionObserver: NSObjectProtocol?
+
+    init() {
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+            self?.interrupted = type == .began
+            if type == .began { self?.stopAll() }
+        }
+    }
+
+    deinit {
+        players.values.forEach { $0.stop() }
+        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
+    }
+
+    private func prepare() {
+        guard !prepared else { return }
+        prepared = true
+        do {
+            // Ambient respects the silent switch and mixes with the user's music.
+            try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default)
+            try AVAudioSession.sharedInstance().setActive(true)
+            for sound in GameSound.allCases {
+                let player = try AVAudioPlayer(data: Self.waveData(for: sound))
+                player.volume = sound == .movement ? 0.16 : 0.55
+                player.numberOfLoops = sound == .movement ? -1 : 0
+                player.prepareToPlay()
+                players[sound] = player
+            }
+        } catch {
+            players = [:]
+        }
+    }
+
+    func setMoving(_ moving: Bool) {
+        guard moving, enabled, !interrupted else {
+            players[.movement]?.stop()
+            players[.movement]?.currentTime = 0
+            return
+        }
+        prepare()
+        if let player = players[.movement], !player.isPlaying { player.play() }
+    }
+
+    func play(_ sound: GameSound) {
+        guard enabled, !interrupted else { return }
+        prepare()
+        guard let player = players[sound] else { return }
+        player.currentTime = 0
+        player.play()
+    }
+
+    func stopAll() {
+        for player in players.values { player.stop(); player.currentTime = 0 }
+    }
+
+    static func waveData(for sound: GameSound) -> Data {
+        let rate = 22_050
+        let count = Int(sound.duration * Double(rate))
+        var samples = Data(capacity: count * 2)
+        var noiseState: UInt32 = 42
+        var filteredNoise = 0.0
+        for frame in 0..<count {
+            let t = Double(frame) / Double(rate)
+            noiseState = noiseState &* 1_664_525 &+ 1_013_904_223
+            let noise = Double(noiseState) / Double(UInt32.max) * 2 - 1
+            filteredNoise += (noise - filteredNoise) * 0.15
+            let fade = min(1, t / 0.005, (sound.duration - t) / 0.008)
+            let value: Double
+            switch sound {
+            case .movement:
+                let pulse = 0.5 + 0.5 * cos(2 * .pi * t / sound.duration * 4)
+                value = (filteredNoise * 0.65 + sin(2 * .pi * 125 * t) * 0.08) * pulse
+            case .snip:
+                let envelope = exp(-t * 18)
+                value = (sin(2 * .pi * (1_100 * t - 1_900 * t * t)) * 0.5 + noise * 0.3) * envelope
+            case .capture:
+                let notes = [523.25, 659.25, 783.99, 1_046.5]
+                value = notes.enumerated().reduce(0.0) { result, note in
+                    let local = t - Double(note.offset) * 0.075
+                    guard local >= 0 else { return result }
+                    let envelope = min(1, local / 0.006) * exp(-local * 12)
+                    return result + sin(2 * .pi * note.element * local) * envelope * 0.3
+                }
+            case .countdown:
+                value = sin(2 * .pi * 880 * t) * exp(-t * 35) * 0.5
+            }
+            var sample = Int16(max(-1, min(1, value * fade)) * Double(Int16.max)).littleEndian
+            withUnsafeBytes(of: &sample) { samples.append(contentsOf: $0) }
+        }
+        var data = Data()
+        func text(_ value: String) { data.append(contentsOf: value.utf8) }
+        func word<T: FixedWidthInteger>(_ value: T) {
+            var little = value.littleEndian
+            withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
+        }
+        text("RIFF"); word(UInt32(36 + samples.count)); text("WAVEfmt ")
+        word(UInt32(16)); word(UInt16(1)); word(UInt16(1))
+        word(UInt32(rate)); word(UInt32(rate * 2)); word(UInt16(2)); word(UInt16(16))
+        text("data"); word(UInt32(samples.count)); data.append(samples)
+        return data
+    }
 }

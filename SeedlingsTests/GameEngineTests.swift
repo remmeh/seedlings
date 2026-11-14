@@ -1,6 +1,7 @@
 import XCTest
 import SwiftUI
 import SpriteKit
+import AVFoundation
 @testable import Seedlings
 
 final class GameEngineTests: XCTestCase {
@@ -434,6 +435,155 @@ final class GameEngineTests: XCTestCase {
         attachment.name = "Fullscreen landscape gameplay"
         attachment.lifetime = .keepAlways
         add(attachment)
+        window.isHidden = true
+    }
+
+    func testRivalsPlanCurvedSubCellRoutes() {
+        let engine = GameEngine(seed: 19)
+        engine.update(dt: 0.01)
+        for rival in engine.players.dropFirst() {
+            XCTAssertGreaterThan(rival.route.count, 60)
+            XCTAssertTrue(rival.route.allSatisfy { engine.land.contains($0.cell) })
+            let offsets = zip(rival.route, rival.route.dropFirst()).map {
+                GamePoint(x: $1.x - $0.x, y: $1.y - $0.y)
+            }
+            XCTAssertGreaterThan(offsets.filter { abs($0.x) > 0.001 && abs($0.y) > 0.001 }.count, offsets.count / 2)
+            for (a, b) in zip(offsets, offsets.dropFirst()) {
+                XCTAssertLessThanOrEqual(a.length, 0.301)
+                if let a = a.normalized, let b = b.normalized {
+                    XCTAssertGreaterThan(a.x * b.x + a.y * b.y, 0.97)
+                }
+            }
+        }
+    }
+
+    func testAnalogJoystickDeadZoneAndUnrestrictedAngle() {
+        XCTAssertNil(GamePoint.joystick(dx: 3, dy: 2))
+        let heading = GamePoint.joystick(dx: 30, dy: 10)!
+        XCTAssertEqual(heading.length, 1, accuracy: 0.000001)
+        XCTAssertEqual(heading.x / heading.y, 3, accuracy: 0.000001)
+    }
+
+    func testSynthesizedSoundFilesDecodeAndHaveSafeLevels() throws {
+        for sound in GameSound.allCases {
+            let data = GameAudio.waveData(for: sound)
+            XCTAssertEqual(String(data: data.prefix(4), encoding: .utf8), "RIFF")
+            let player = try AVAudioPlayer(data: data)
+            XCTAssertEqual(player.duration, sound.duration, accuracy: 1.0 / 22_050)
+            XCTAssertEqual(player.numberOfChannels, 1)
+            let bytes = Array(data.dropFirst(44))
+            let samples = stride(from: 0, to: bytes.count, by: 2).map { index in
+                Int(Int16(bitPattern: UInt16(bytes[index]) | UInt16(bytes[index + 1]) << 8))
+            }
+            XCTAssertGreaterThan(samples.map { abs($0) }.max()!, 100)
+            XCTAssertLessThan(samples.map { abs($0) }.max()!, 32_767)
+            XCTAssertEqual(samples.first, 0)
+            XCTAssertLessThan(abs(samples.last!), 500)
+        }
+    }
+
+    private final class SoundSpy: GameSoundPlaying {
+        var enabled = true
+        var effects: [GameSound] = []
+        var moving = false
+        var stopCount = 0
+        func setMoving(_ value: Bool) { moving = value && enabled }
+        func play(_ sound: GameSound) { if enabled { effects.append(sound) } }
+        func stopAll() { moving = false; stopCount += 1 }
+    }
+
+    @MainActor
+    func testMovementAudioStopsOnReleaseAndPause() {
+        let spy = SoundSpy()
+        let scene = GameScene(engine: fixture(), sounds: spy)
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 900, height: 650))
+        view.isPaused = true; view.presentScene(scene)
+        scene.update(1)
+        scene.steer(with: GamePoint(x: 1, y: 0))
+        scene.update(1.02)
+        XCTAssertTrue(spy.moving)
+        scene.steer(with: nil)
+        XCTAssertFalse(spy.moving)
+        scene.update(1.04)
+        XCTAssertFalse(spy.moving)
+        scene.frozen = true
+        XCTAssertGreaterThan(spy.stopCount, 0)
+    }
+
+    @MainActor
+    func testLocalCaptureAndSnipPlayDistinctEffects() {
+        let spy = SoundSpy()
+        let engine = fixture()
+        let scene = GameScene(engine: engine, sounds: spy)
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 900, height: 650))
+        view.isPaused = true; view.presentScene(scene)
+        scene.haptics = false
+        engine.events = [.captured(1, 5), .cut(1), .captured(0, 0)]
+        scene.update(1)
+        XCTAssertTrue(spy.effects.isEmpty)
+        engine.events = [.captured(0, 10), .cut(0)]
+        scene.update(1.02)
+        XCTAssertEqual(spy.effects, [.capture, .snip])
+        XCTAssertFalse(spy.moving)
+    }
+
+    @MainActor
+    func testCountdownTicksOnceForEachOfTheLastTenSeconds() {
+        let spy = SoundSpy()
+        let engine = fixture()
+        let scene = GameScene(engine: engine, sounds: spy)
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 900, height: 650))
+        view.isPaused = true; view.presentScene(scene)
+        scene.update(1)
+        XCTAssertTrue(spy.effects.isEmpty)
+        var time = 1.0
+        for second in stride(from: 10, through: 1, by: -1) {
+            engine.elapsed = 60 - Double(second) - 0.01
+            time += 0.02; scene.update(time)
+            time += 0.02; scene.update(time)
+        }
+        XCTAssertEqual(spy.effects, Array(repeating: .countdown, count: 10))
+        engine.elapsed = 59.99
+        time += 0.02; scene.update(time)
+        XCTAssertEqual(spy.effects.count, 10)
+        XCTAssertGreaterThan(spy.stopCount, 0)
+        XCTAssertTrue(engine.finished)
+    }
+
+    @MainActor
+    func testRestartReplacesTheVisiblePausedSceneOnTheSameIsland() {
+        let session = GameSession()
+        session.start(level: 3, seed: 42)
+        let oldScene = session.scene!
+        let island = oldScene.engine.land
+        let owners = oldScene.engine.owners
+        oldScene.engine.elapsed = 25
+        session.setPaused(true)
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else {
+            XCTFail("An iPad window scene is required"); return
+        }
+        let window = UIWindow(windowScene: windowScene)
+        let controller = UIHostingController(rootView: ContentView(session: session))
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        controller.view.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        session.restart()
+        XCTAssertEqual(session.timeRemaining, 60)
+        controller.view.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        func sceneView(_ view: UIView) -> SKView? {
+            if let view = view as? SKView { return view }
+            return view.subviews.compactMap { sceneView($0) }.first
+        }
+        XCTAssertFalse(session.scene === oldScene)
+        XCTAssertTrue(sceneView(controller.view)?.scene === session.scene)
+        XCTAssertFalse(session.paused)
+        XCTAssertFalse(session.scene!.frozen)
+        XCTAssertEqual(session.engine!.land, island)
+        XCTAssertEqual(session.engine!.owners, owners)
+        XCTAssertGreaterThan(session.timeRemaining, 59)
+        XCTAssertLessThanOrEqual(session.timeRemaining, 60)
+        XCTAssertEqual(session.level, 3)
         window.isHidden = true
     }
 
