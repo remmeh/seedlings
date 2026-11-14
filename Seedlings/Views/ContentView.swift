@@ -8,14 +8,19 @@ extension Color {
 }
 
 struct ContentView: View {
-    @StateObject private var session = GameSession()
+    @StateObject private var session: GameSession
+
+    init(session: GameSession = GameSession()) {
+        _session = StateObject(wrappedValue: session)
+    }
+    @State private var showDirectionPad = false
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 Color.paper.ignoresSafeArea()
                 if let scene = session.scene {
-                    game(scene, wide: geometry.size.width > 850)
+                    game(scene)
                 } else {
                     home(wide: geometry.size.width > 850)
                 }
@@ -24,6 +29,8 @@ struct ContentView: View {
             }
             .foregroundStyle(Color.ink)
         }
+        .statusBarHidden(session.scene != nil)
+        .persistentSystemOverlays(session.scene == nil ? .automatic : .hidden)
         .sheet(isPresented: Binding(get: { session.showHelp }, set: { session.setHelp($0) })) { help }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active, session.scene != nil { session.setPaused(true) }
@@ -104,72 +111,57 @@ struct ContentView: View {
         }
     }
 
-    private func game(_ scene: GameScene, wide: Bool) -> some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 18) {
-                wordmark
-                Text("ISLAND \(String(format: "%02d", session.level))")
-                    .font(.system(size: 11, weight: .bold, design: .rounded)).tracking(1.4)
-                    .padding(.horizontal, 14).padding(.vertical, 9).background(.white.opacity(0.7), in: Capsule())
-                Spacer()
-                iconButton("questionmark", label: "How to play") { session.setHelp(true) }
-                iconButton("pause.fill", label: "Pause game") { session.setPaused(true) }
-            }.padding(.top, 12)
-            HStack(spacing: 18) {
-                ZStack(alignment: .bottomLeading) {
-                    SpriteView(scene: scene).clipShape(RoundedRectangle(cornerRadius: 30))
-                        .accessibilityLabel("Island game board")
-                        .accessibilityHint("Drag to steer, or use the direction buttons below.")
-                    HStack(spacing: 6) {
-                        Image(systemName: "hand.draw")
-                        Text("Drag anywhere to steer")
-                    }.font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(Color.moss).padding(12)
-                        .background(Color.white.opacity(0.75), in: Capsule()).padding(16).allowsHitTesting(false)
+    private func game(_ scene: GameScene) -> some View {
+        ZStack {
+            SpriteView(scene: scene, preferredFramesPerSecond: 120)
+                .ignoresSafeArea()
+                .accessibilityLabel("Island game board")
+                .accessibilityHint("Drag anywhere to steer freely. Lift your finger to stop.")
+            VStack {
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("ISLAND \(session.level)")
+                            .font(.system(size: 10, weight: .heavy, design: .rounded)).tracking(2)
+                        HStack(spacing: 12) {
+                            ForEach(ranked, id: \.self) { id in
+                                HStack(spacing: 4) {
+                                    Text(session.engine?.players[id].fruit.emoji ?? "🍉")
+                                    Text("\(percentage(id), specifier: "%.1f")%")
+                                    if session.leader == id { Image(systemName: "crown.fill").foregroundStyle(.orange) }
+                                }
+                                .font(.system(size: 12, weight: .bold, design: .rounded)).monospacedDigit()
+                                .accessibilityLabel("\(id == 0 ? "You" : session.engine?.players[id].fruit.name ?? "Rival"), \(percentage(id), specifier: "%.1f") percent")
+                            }
+                        }
+                        ProgressView(value: session.allocated).tint(Color.moss)
+                            .accessibilityLabel("Island claimed")
+                    }
+                    .padding(14).frame(maxWidth: 410)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+                    Spacer(minLength: 0)
+                    iconButton("questionmark", label: "How to play") { session.setHelp(true) }
+                    iconButton("pause.fill", label: "Pause game") { session.setPaused(true) }
                 }
-                if wide { sidebar.frame(width: 212) }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            if !wide { compactScores }
-            HStack {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(session.status).font(.system(size: 14, weight: .bold, design: .rounded))
-                    Text("Reconnect to your color to claim the loop. Protect your trail!")
-                        .font(.system(size: 11, weight: .medium, design: .rounded)).foregroundStyle(Color.moss)
-                }.accessibilityElement(children: .combine)
                 Spacer()
-                directionButtons(scene)
-            }.padding(.bottom, 10)
-        }.padding(.horizontal, 24)
-    }
-
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack { Text("THE PATCH").tracking(1.8); Spacer(); Image(systemName: "flag.fill") }
-                .font(.system(size: 11, weight: .bold, design: .rounded)).foregroundStyle(Color.moss)
-            VStack(spacing: 10) {
-                ForEach(ranked, id: \.self) { id in scoreRow(id) }
-            }
-            Divider().overlay(Color.ink.opacity(0.1))
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Island claimed").font(.system(size: 12, weight: .semibold, design: .rounded))
+                HStack(alignment: .bottom) {
+                    Text(session.status)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .padding(.horizontal, 16).padding(.vertical, 12)
+                        .background(.regularMaterial, in: Capsule())
+                        .allowsHitTesting(false)
                     Spacer()
-                    Text("\(session.allocated * 100, specifier: "%.0f")%")
-                        .font(.system(size: 12, weight: .bold, design: .rounded)).monospacedDigit()
+                    VStack(alignment: .trailing, spacing: 12) {
+                        if showDirectionPad { directionButtons(scene) }
+                        Button { showDirectionPad.toggle() } label: {
+                            Label(showDirectionPad ? "Hide controls" : "Controls", systemImage: "dpad")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .padding(12).background(.regularMaterial, in: Capsule())
+                        }.buttonStyle(.plain)
+                    }
                 }
-                ProgressView(value: session.allocated).tint(Color.moss)
-                Text("The round ends when every little patch has a home.")
-                    .font(.system(size: 12, weight: .medium, design: .rounded)).lineSpacing(4).foregroundStyle(Color.moss)
-            }
-            Spacer(minLength: 8)
-            VStack(alignment: .leading, spacing: 10) {
-                Image(systemName: "crown.fill").font(.system(size: 25)).foregroundStyle(Color(red: 0.78, green: 0.58, blue: 0.17))
-                Text("Grow your kingdom.").font(.system(size: 17, weight: .bold, design: .rounded))
-                Text("The biggest patch gets the crown. Steal a loop to take the lead.")
-                    .font(.system(size: 12, weight: .medium, design: .rounded)).lineSpacing(4).foregroundStyle(Color.moss)
-            }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(red: 0.95, green: 0.91, blue: 0.79), in: RoundedRectangle(cornerRadius: 22))
-        }.padding(.vertical, 16)
+            }.padding(20)
+        }
+        .defersSystemGestures(on: .all)
     }
 
     private var ranked: [Int] {
@@ -196,33 +188,27 @@ struct ContentView: View {
             .accessibilityElement(children: .combine)
     }
 
-    private var compactScores: some View {
-        VStack(spacing: 8) {
-            HStack {
-                ForEach(0..<4) { id in
-                    HStack(spacing: 4) {
-                        Text(session.engine?.players[id].fruit.emoji ?? "🍉")
-                        Text("\(percentage(id), specifier: "%.1f")%")
-                        if session.leader == id { Image(systemName: "crown.fill").foregroundStyle(.orange) }
-                    }.font(.system(size: 12, weight: .bold, design: .rounded)).frame(maxWidth: .infinity)
-                }
-            }
-            ProgressView(value: session.allocated).tint(Color.moss).accessibilityLabel("Island claimed")
-        }
-    }
-
     private func percentage(_ id: Int) -> Double {
         Double(session.scores[id]) * 100 / Double(max(session.engine?.land.count ?? 1, 1))
     }
 
     private func directionButtons(_ scene: GameScene) -> some View {
-        HStack(spacing: 6) {
-            directionButton(.left, symbol: "arrow.left", scene: scene)
-            VStack(spacing: 4) {
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                directionButton(.upLeft, symbol: "arrow.up.left", scene: scene)
                 directionButton(.up, symbol: "arrow.up", scene: scene)
-                directionButton(.down, symbol: "arrow.down", scene: scene)
+                directionButton(.upRight, symbol: "arrow.up.right", scene: scene)
             }
-            directionButton(.right, symbol: "arrow.right", scene: scene)
+            HStack(spacing: 4) {
+                directionButton(.left, symbol: "arrow.left", scene: scene)
+                Color.clear.frame(width: 44, height: 44)
+                directionButton(.right, symbol: "arrow.right", scene: scene)
+            }
+            HStack(spacing: 4) {
+                directionButton(.downLeft, symbol: "arrow.down.left", scene: scene)
+                directionButton(.down, symbol: "arrow.down", scene: scene)
+                directionButton(.downRight, symbol: "arrow.down.right", scene: scene)
+            }
         }
     }
 
@@ -235,9 +221,9 @@ struct ContentView: View {
                 .frame(width: 44, height: 44).background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 13))
         }.buttonStyle(.plain)
             .simultaneousGesture(DragGesture(minimumDistance: 0)
-                .onChanged { _ in if !scene.frozen { scene.steering = direction } }
+                .onChanged { _ in if !scene.frozen { scene.heading = nil; scene.steering = direction } }
                 .onEnded { _ in scene.steering = nil })
-            .accessibilityLabel("Move \(symbol.replacingOccurrences(of: "arrow.", with: ""))")
+            .accessibilityLabel("Move \(symbol.replacingOccurrences(of: "arrow.", with: "").replacingOccurrences(of: ".", with: " "))")
     }
 
     private func iconButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
@@ -298,7 +284,7 @@ struct ContentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     Text("Little loops.\nBig possibilities.").font(.system(size: 36, weight: .heavy, design: .rounded))
-                    helpRow("hand.draw.fill", "1. Find your feet", "Touch anywhere on the island and drag in a direction. Keep your finger down to move; lift it to stop. The arrow buttons work too.")
+                    helpRow("hand.draw.fill", "1. Find your feet", "Touch anywhere on the island and drag to steer freely in any direction. Keep your finger down to move; lift it to stop. Tap Controls to show the arrow buttons.")
                     helpRow("point.topleft.down.to.point.bottomright.curvepath", "2. Make a loop", "Leave your colored patch to draw a seed trail. Return to your territory to claim the trail and everything enclosed—even another fruit's land.")
                     helpRow("scissors", "3. Protect your trail", "Cross a rival's exposed trail to snip it. If yours gets cut, or you cross your own trail, you return home. Your existing land stays yours.")
                     helpRow("crown.fill", "4. Wear the crown", "The fruit with the most land wears the crown. The round ends only when 100% of the island is claimed. The biggest kingdom wins; ties favor You, then the listed rival order.")

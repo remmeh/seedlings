@@ -18,12 +18,14 @@ final class GameScene: SKScene {
     var onTick: (() -> Void)?
     var onEvent: ((GameEvent) -> Void)?
     var steering: Direction?
+    var heading: GamePoint?
     var frozen = false
     private let board = SKNode()
     private var sprites: [Int: SKNode] = [:]
     private var trails: [Int: SKShapeNode] = [:]
     private var territories: [Int: SKShapeNode] = [:]
-    private var drawnTrails: [Int: [Cell]] = [:]
+    private var drawnTraceRevisions: [Int: Int] = [:]
+    private var drawnSeedTrails: [Int: [Cell]] = [:]
     private var marks = SKNode()
     private var lastTime: TimeInterval = 0
     private var hudClock: Double = 0
@@ -45,6 +47,7 @@ final class GameScene: SKScene {
 
     override func didMove(to view: SKView) {
         view.isMultipleTouchEnabled = true
+        view.preferredFramesPerSecond = 120
         guard board.parent == nil else { return }
         addChild(board)
         stick.strokeColor = UIColor(hex: 0x56745D).withAlphaComponent(0.35)
@@ -60,21 +63,20 @@ final class GameScene: SKScene {
     }
 
     private func buildBoard() {
-        board.removeAllChildren(); sprites = [:]; trails = [:]; territories = [:]; drawnTrails = [:]
+        board.removeAllChildren(); sprites = [:]; trails = [:]; territories = [:]; drawnTraceRevisions = [:]; drawnSeedTrails = [:]
         tile = min((size.width - 34) / CGFloat(GameEngine.width), (size.height - 42) / CGFloat(GameEngine.height))
         tile = max(1, tile)
         board.position = CGPoint(x: (size.width - CGFloat(GameEngine.width) * tile) / 2, y: (size.height - CGFloat(GameEngine.height) * tile) / 2)
-        let island = CGMutablePath()
-        for cell in engine.land { island.addRect(rect(cell)) }
+        let island = terrainPath(engine.land)
         let shadow = SKShapeNode(path: island)
         shadow.fillColor = UIColor(hex: 0xB5C7AD); shadow.strokeColor = .clear
         shadow.position.y = -tile * 0.65; board.addChild(shadow)
         let sand = SKShapeNode(path: island)
-        sand.fillColor = UIColor(hex: 0xFCF8ED); sand.strokeColor = UIColor(hex: 0xFFFFFF)
+        sand.fillColor = UIColor(hex: 0xFCF8ED); sand.strokeColor = .clear
         sand.lineWidth = 3; sand.zPosition = 1; board.addChild(sand)
         // Quiet dots give unclaimed land a tactile, paper-like texture.
         let dots = CGMutablePath()
-        for cell in engine.land where cell.x % 2 == 0 && cell.y % 2 == 0 {
+        for cell in engine.land where cell.x % 8 == 0 && cell.y % 8 == 0 {
             let point = point(cell)
             dots.addEllipse(in: CGRect(x: point.x - 0.7, y: point.y - 0.7, width: 1.4, height: 1.4))
         }
@@ -83,7 +85,7 @@ final class GameScene: SKScene {
         for player in engine.players {
             let shape = SKShapeNode(); shape.fillColor = player.fruit.color; shape.strokeColor = .clear
             shape.zPosition = 3; territories[player.id] = shape; board.addChild(shape)
-            let trail = SKShapeNode(); trail.strokeColor = player.fruit.darkColor; trail.lineWidth = tile * 0.42
+            let trail = SKShapeNode(); trail.strokeColor = player.fruit.darkColor; trail.lineWidth = max(2.5, tile * 0.85)
             trail.lineCap = .round; trail.lineJoin = .round; trail.zPosition = 5
             trails[player.id] = trail; board.addChild(trail)
             let sprite = makeCharacter(player.fruit)
@@ -97,19 +99,38 @@ final class GameScene: SKScene {
     private func point(_ cell: Cell) -> CGPoint {
         CGPoint(x: (CGFloat(cell.x) + 0.5) * tile, y: (CGFloat(cell.y) + 0.5) * tile)
     }
-    private func rect(_ cell: Cell) -> CGRect {
-        CGRect(x: CGFloat(cell.x) * tile, y: CGFloat(cell.y) * tile, width: tile + 0.12, height: tile + 0.12)
+    private func point(_ location: GamePoint) -> CGPoint {
+        CGPoint(x: (location.x + 0.5) * Double(tile), y: (location.y + 0.5) * Double(tile))
+    }
+
+    // Merge horizontal runs, avoiding thousands of individually stroked grid squares.
+    private func terrainPath(_ cells: Set<Cell>) -> CGPath {
+        let path = CGMutablePath()
+        let rows = Dictionary(grouping: cells, by: \.y)
+        for (y, row) in rows {
+            let xs = row.map(\.x).sorted()
+            guard var first = xs.first else { continue }
+            var last = first
+            func addRun() {
+                path.addRect(CGRect(x: CGFloat(first) * tile, y: CGFloat(y) * tile,
+                                    width: CGFloat(last - first + 1) * tile + 0.12, height: tile + 0.12))
+            }
+            for x in xs.dropFirst() {
+                if x != last + 1 { addRun(); first = x }
+                last = x
+            }
+            addRun()
+        }
+        return path
     }
     private func redrawTerritories() {
         guard drawnRevision != engine.revision else { return }
         drawnRevision = engine.revision
         for player in engine.players {
-            let path = CGMutablePath()
-            for (cell, owner) in engine.owners where owner == player.id { path.addRect(rect(cell)) }
-            territories[player.id]?.path = path
+            territories[player.id]?.path = terrainPath(Set(engine.owners.compactMap { $0.value == player.id ? $0.key : nil }))
         }
         marks.removeAllChildren()
-        for (cell, owner) in engine.owners where cell.x % 4 == 0 && cell.y % 4 == 0 {
+        for (cell, owner) in engine.owners where cell.x % 8 == 0 && cell.y % 8 == 0 {
             let seed = SKShapeNode(ellipseOf: CGSize(width: tile * 0.25, height: tile * 0.4))
             seed.fillColor = engine.players[owner].fruit.darkColor.withAlphaComponent(0.42)
             seed.strokeColor = .clear; seed.zRotation = -0.4; seed.position = point(cell)
@@ -118,6 +139,7 @@ final class GameScene: SKScene {
     }
 
     private func makeCharacter(_ fruit: Fruit) -> SKNode {
+        let tile = self.tile * 2
         let node = SKNode()
         let shadow = SKShapeNode(ellipseOf: CGSize(width: tile * 3.3, height: tile * 1.3))
         shadow.fillColor = UIColor.black.withAlphaComponent(0.12); shadow.strokeColor = .clear
@@ -172,25 +194,23 @@ final class GameScene: SKScene {
         let leader = engine.leader
         for player in engine.players {
             let sprite = sprites[player.id]!
-            let target = point(player.position)
-            // Subtle interpolation softens the discrete simulation without altering rules.
-            sprite.position.x += (target.x - sprite.position.x) * 0.45
-            sprite.position.y += (target.y - sprite.position.y) * 0.45
-            if abs(sprite.position.x - target.x) > tile * 5 || abs(sprite.position.y - target.y) > tile * 5 { sprite.position = target }
+            sprite.position = point(player.location)
             sprite.alpha = player.protection > 0 ? 0.55 + CGFloat(sin(engine.elapsed * 18) + 1) * 0.2 : 1
             sprite.childNode(withName: "crown")?.isHidden = player.id != leader
-            guard drawnTrails[player.id] != player.trail else { continue }
-            drawnTrails[player.id] = player.trail
+            guard drawnTraceRevisions[player.id] != player.traceRevision else { continue }
+            drawnTraceRevisions[player.id] = player.traceRevision
             let path = CGMutablePath()
-            if let anchor = player.anchor, !player.trail.isEmpty {
-                path.move(to: point(anchor))
-                for cell in player.trail { path.addLine(to: point(cell)) }
+            if let first = player.visualTrail.first {
+                path.move(to: point(first))
+                for location in player.visualTrail.dropFirst() { path.addLine(to: point(location)) }
             }
             trails[player.id]?.path = path
+            guard drawnSeedTrails[player.id] != player.trail else { continue }
+            drawnSeedTrails[player.id] = player.trail
             // Every character leaves little fruit-colored seeds behind.
             trails[player.id]?.children.forEach { $0.removeFromParent() }
-            for (index, cell) in player.trail.enumerated() where index % 2 == 0 {
-                let seed = SKShapeNode(ellipseOf: CGSize(width: tile * 0.35, height: tile * 0.62))
+            for (index, cell) in player.trail.enumerated() where index % 8 == 0 {
+                let seed = SKShapeNode(ellipseOf: CGSize(width: tile * 0.7, height: tile * 1.24))
                 seed.fillColor = player.fruit.darkColor; seed.strokeColor = .white.withAlphaComponent(0.6)
                 seed.lineWidth = 0.8; seed.zRotation = -0.5; seed.position = point(cell)
                 trails[player.id]?.addChild(seed)
@@ -202,7 +222,7 @@ final class GameScene: SKScene {
         let dt = lastTime == 0 ? 0 : min(currentTime - lastTime, 0.08)
         lastTime = currentTime
         guard !frozen else { return }
-        engine.update(dt: dt, direction: steering)
+        engine.update(dt: dt, direction: steering, heading: heading)
         redrawTerritories(); drawPlayers()
         let events = engine.events; engine.events.removeAll()
         for event in events {
@@ -226,7 +246,7 @@ final class GameScene: SKScene {
     }
 
     func clearInput() {
-        steering = nil; inputOrigin = nil; activeTouch = nil; stick.isHidden = true
+        steering = nil; heading = nil; inputOrigin = nil; activeTouch = nil; stick.isHidden = true
     }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard !frozen, activeTouch == nil, let touch = touches.first else { return }
@@ -239,9 +259,8 @@ final class GameScene: SKScene {
         let dx = location.x - origin.x, dy = location.y - origin.y
         let length = hypot(dx, dy)
         knob.position = CGPoint(x: dx * min(1, 24 / max(1, length)), y: dy * min(1, 24 / max(1, length)))
-        if length < 7 { steering = nil }
-        else if abs(dx) > abs(dy) { steering = dx > 0 ? .right : .left }
-        else { steering = dy > 0 ? .up : .down }
+        heading = GamePoint.joystick(dx: Double(dx), dy: Double(dy))
+        steering = nil
     }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         if let touch = activeTouch, touches.contains(touch) { clearInput() }

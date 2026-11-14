@@ -19,24 +19,24 @@ xcodebuild -project Seedlings.xcodeproj -scheme Seedlings \
 ## Play
 
 - Choose watermelon, orange, blueberry, or kiwi on the home screen.
-- Touch anywhere on the board and drag in a direction. Keep your finger down to move; lift it to stop. Holding the arrow buttons moves continuously, and tapping moves one cell. Buttons also support VoiceOver.
+- The native SpriteKit playfield fills the screen, with floating scores and pause controls. Touch anywhere on the board and drag to steer freely at any angle. Keep your finger down to move; lift it to stop. Tap Controls to reveal optional direction buttons. Holding an arrow moves continuously, and tapping moves one fine-grid cell. Buttons also support VoiceOver.
 - Your colored territory is home. Leaving it creates an exposed seed trail. Reconnect to your land to claim the trail and the enclosed cells, including opponents' land.
 - Touching an opponent's exposed trail snips it and sends them home. Crossing your own trail has the same consequence. You keep previously owned land. If all of a fruit's land is stolen, it receives a small new foothold.
 - The largest territory wears the crown. Ties favor You, then rival order. The round ends **only when every playable cell is allocated**. There is no round timer or automatic allocation.
-- The next island uses the same 64 × 48 logical canvas and a newly generated organic outline. Rivals become slightly faster over successive levels, up to a fixed limit.
+- The next island uses the same 128 × 96 logical canvas and a newly generated organic outline. Rivals become slightly faster over successive levels, up to a fixed limit.
 - Pause, restart, how-to-play, best completed score, haptics, and automatic pause when the app becomes inactive are included. Best score and haptic preferences stay on this device. A round in progress is not restored after the app is terminated.
 
 ## Implementation
 
-`Game/GameEngine.swift` contains the rules and seeded random island generation using only Foundation. Characters move on four-connected cells. Capturing closes an exposed trail with a shortest path through connected home territory, then applies point-in-polygon membership. This supports captures against the island boundary without flood-filling into the ocean. If a rival has disconnected the departure anchor from the return point, reconnecting claims the trail alone. A cut gives a brief 1.5-second protection period.
+`Game/GameEngine.swift` contains the rules and seeded random island generation using only Foundation. Characters move continuously at a constant world speed on a finer 128 × 96 territory grid. Short substeps check every crossed cell; rendering uses the exact sub-cell position and a continuous trail centerline. Touch steering preserves the drag angle. Crossing diagonal trail segments also snips the trail. Terrain is rendered as merged horizontal runs without grid outlines. Capturing closes an exposed trail with a shortest path through connected home territory, then applies point-in-polygon membership. This supports captures against the island boundary without flood-filling into the ocean. If a rival has disconnected the departure anchor from the return point, reconnecting claims the trail alone. A cut gives a brief 1.5-second protection period.
 
-`Game/GameScene.swift` draws all terrain, trails, fruit characters, and the crown with SpriteKit paths. `Views/` supplies native SwiftUI menus, responsive layout, scores, controls, instructions, and results. The app is iPad-only, supports portrait and landscape, and targets iPadOS 17+. It uses no web views or online services.
+`Game/GameScene.swift` draws all terrain, trails, fruit characters, and the crown with SpriteKit paths. `Views/` supplies native SwiftUI menus, floating game HUD, optional controls, instructions, and results. Gameplay hides the status bar and home indicator and requests up to 120 fps on supported displays. The app is iPad-only, supports portrait and landscape, and targets iPadOS 17+. It uses no web views or online services.
 
 Three computer-controlled rivals complete loops and compete for the same land. This prototype does **not** include online multiplayer, Game Center, audio, in-app purchases, or production analytics. Those require separate product and implementation work; there is no simulated multiplayer connection.
 
 ## Verification status
 
-The project was authored in a Linux environment, which does not have Xcode, Apple's iPadOS SDK, or an iPad simulator. The included XCTest cases cover loop capture, open trails, stealing, cuts, invalid moves, crown changes, complete allocation, connected randomized islands, and bot ownership invariants. **An Apple-platform build and simulator/device run are still required.** Do not treat this source delivery as a tested App Store binary.
+The XCTest cases cover loop capture, open trails, stealing, cuts, invalid moves, crown changes, complete allocation, connected randomized islands, and bot ownership invariants. Builds and tests run with Xcode on an iPad simulator. Physical-device playtesting and performance profiling are still needed before release.
 
 ## Useful next milestones
 

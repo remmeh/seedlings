@@ -3,18 +3,59 @@ import Foundation
 struct Cell: Hashable {
     var x: Int
     var y: Int
+    func isAdjacent(to other: Cell) -> Bool {
+        self != other && abs(x - other.x) <= 1 && abs(y - other.y) <= 1
+    }
     func moved(_ direction: Direction) -> Cell {
         Cell(x: x + direction.dx, y: y + direction.dy)
     }
 }
 
+/// Sub-cell coordinates keep motion independent of the territory grid and display refresh rate.
+struct GamePoint: Equatable {
+    var x: Double
+    var y: Double
+    init(x: Double, y: Double) { self.x = x; self.y = y }
+    init(_ cell: Cell) { x = Double(cell.x); y = Double(cell.y) }
+    var cell: Cell { Cell(x: Int(x.rounded()), y: Int(y.rounded())) }
+    var length: Double { hypot(x, y) }
+    var normalized: GamePoint? {
+        guard length > 0.000001 else { return nil }
+        return GamePoint(x: x / length, y: y / length)
+    }
+    static func joystick(dx: Double, dy: Double) -> GamePoint? {
+        guard hypot(dx, dy) >= 7 else { return nil }
+        return GamePoint(x: dx, y: dy).normalized
+    }
+}
+
 enum Direction: CaseIterable {
-    case up, right, down, left
-    var dx: Int { self == .right ? 1 : self == .left ? -1 : 0 }
-    var dy: Int { self == .up ? 1 : self == .down ? -1 : 0 }
+    case up, upRight, right, downRight, down, downLeft, left, upLeft
+    var dx: Int {
+        switch self {
+        case .upRight, .right, .downRight: return 1
+        case .upLeft, .left, .downLeft: return -1
+        default: return 0
+        }
+    }
+    var dy: Int {
+        switch self {
+        case .upLeft, .up, .upRight: return 1
+        case .downLeft, .down, .downRight: return -1
+        default: return 0
+        }
+    }
+    var stepLength: Double { dx != 0 && dy != 0 ? sqrt(2) : 1 }
+
+    /// Snap the joystick to eight equal 45-degree sectors, with a small dead zone.
+    static func steering(dx: Double, dy: Double) -> Direction? {
+        guard hypot(dx, dy) >= 7 else { return nil }
+        let sector = Int((atan2(dy, dx) / (.pi / 4)).rounded())
+        return [Direction.right, .upRight, .up, .upLeft, .left, .downLeft, .down, .downRight][(sector + 8) % 8]
+    }
+
     static func between(_ a: Cell, _ b: Cell) -> Direction {
-        if b.x != a.x { return b.x > a.x ? .right : .left }
-        return b.y > a.y ? .up : .down
+        allCases.first { $0.dx == (b.x - a.x).signum() && $0.dy == (b.y - a.y).signum() } ?? .up
     }
 }
 
@@ -38,16 +79,18 @@ enum Fruit: Int, CaseIterable {
 final class Contestant {
     let id: Int
     let fruit: Fruit
-    var position: Cell
+    var position: Cell { didSet { location = GamePoint(position) } }
+    var location: GamePoint
+    var traceRevision = 0
+    var visualTrail: [GamePoint] = [] { didSet { traceRevision += 1 } }
     var previous: Cell
     var trail: [Cell] = []
     var anchor: Cell?
     var route: [Cell] = []
-    var stepClock: Double = 0
     var protection: Double = 0
     init(id: Int, fruit: Fruit, position: Cell) {
         self.id = id; self.fruit = fruit
-        self.position = position; self.previous = position
+        self.position = position; self.previous = position; self.location = GamePoint(position)
     }
 }
 
@@ -59,8 +102,8 @@ enum GameEvent {
 
 /// Pure Foundation rules. Coordinates are fixed-size cells, independent of screen size.
 final class GameEngine {
-    static let width = 64
-    static let height = 48
+    static let width = 128
+    static let height = 96
     let level: Int
     var land: Set<Cell> = []
     var owners: [Cell: Int] = [:]
@@ -75,12 +118,12 @@ final class GameEngine {
         self.level = level
         random = SeededRandom(state: seed)
         generateIsland()
-        let starts = [Cell(x: 20, y: 17), Cell(x: 44, y: 31), Cell(x: 20, y: 31), Cell(x: 44, y: 17)]
+        let starts = [Cell(x: 40, y: 34), Cell(x: 88, y: 62), Cell(x: 40, y: 62), Cell(x: 88, y: 34)]
         let fruits = [fruit] + Fruit.allCases.filter { $0 != fruit }
         for id in 0..<4 {
             let start = land.min { distance($0, starts[id]) < distance($1, starts[id]) }!
             players.append(Contestant(id: id, fruit: fruits[id], position: start))
-            for x in -3...3 { for y in -3...3 where x*x + y*y <= 11 {
+            for x in -6...6 { for y in -6...6 where x*x + y*y <= 44 {
                 let cell = Cell(x: start.x + x, y: start.y + y)
                 if land.contains(cell) { owners[cell] = id }
             }}
@@ -101,33 +144,42 @@ final class GameEngine {
     private func generateIsland() {
         let phase = Double.random(in: 0...6.28, using: &random)
         for x in 0..<Self.width { for y in 0..<Self.height {
-            let nx = (Double(x) - 31.5) / 29
-            let ny = (Double(y) - 23.5) / 21
+            let nx = (Double(x) - 63.5) / 58
+            let ny = (Double(y) - 47.5) / 42
             let angle = atan2(ny, nx)
             let edge = 0.91 + 0.065 * sin(3 * angle + phase) + 0.045 * cos(5 * angle - phase) + 0.025 * sin(7 * angle + phase)
             if hypot(nx, ny) < edge { land.insert(Cell(x: x, y: y)) }
         }}
     }
 
-    func update(dt: Double, direction: Direction?) {
+    func update(dt: Double, direction: Direction? = nil, heading: GamePoint? = nil) {
         guard !finished else { return }
         let delta = min(max(dt, 0), 0.08)
         elapsed += delta
+        let input = heading?.normalized ?? direction.flatMap {
+            GamePoint(x: Double($0.dx), y: Double($0.dy)).normalized
+        }
         for player in players {
             player.protection = max(0, player.protection - delta)
-            player.stepClock += delta
-            let speed = player.id == 0 ? 9.0 : min(7.3, 5.0 + Double(level) * 0.3)
-            if player.stepClock >= 1 / speed {
-                player.stepClock = 0
-                if player.id == 0 {
-                    if let direction { move(player, to: player.position.moved(direction)) }
-                } else {
-                    if player.route.isEmpty { planBot(player) }
-                    if !player.route.isEmpty {
-                        let next = player.route.removeFirst()
-                        if distance(player.position, next) == 1 { move(player, to: next) }
-                        else { player.route = [] }
+            let speed = player.id == 0 ? 18.0 : min(14.6, 10.0 + Double(level) * 0.6)
+            if player.id == 0 {
+                if let input { _ = advance(player, heading: input, distance: speed * delta) }
+            } else {
+                if player.route.isEmpty { planBot(player) }
+                var remaining = speed * delta
+                while remaining > 0.000001, let target = player.route.first {
+                    guard target == player.position || player.position.isAdjacent(to: target) else {
+                        player.route = []; break
                     }
+                    let offset = GamePoint(x: Double(target.x) - player.location.x,
+                                           y: Double(target.y) - player.location.y)
+                    guard let heading = offset.normalized else { player.route.removeFirst(); continue }
+                    let travel = min(remaining, offset.length)
+                    guard advance(player, heading: heading, distance: travel) else {
+                        player.route = []; break
+                    }
+                    remaining -= travel
+                    if travel >= offset.length - 0.000001, !player.route.isEmpty { player.route.removeFirst() }
                 }
             }
         }
@@ -136,20 +188,60 @@ final class GameEngine {
         }
     }
 
-    func move(_ player: Contestant, to next: Cell) {
-        guard !finished, land.contains(next), distance(player.position, next) == 1 else { return }
+    /// Short substeps check every crossed cell, even when a display frame arrives late.
+    @discardableResult
+    private func advance(_ player: Contestant, heading: GamePoint, distance: Double) -> Bool {
+        guard distance > 0 else { return true }
+        let steps = max(1, Int(ceil(distance / 0.2)))
+        let stride = distance / Double(steps)
+        for _ in 0..<steps {
+            let origin = player.location
+            let next = GamePoint(x: origin.x + heading.x * stride, y: origin.y + heading.y * stride)
+            if next.cell != player.position {
+                let oldTrace = player.visualTrail
+                let wasHome = player.trail.isEmpty
+                guard move(player, to: next.cell) else { return false }
+                if !player.trail.isEmpty { player.visualTrail = wasHome ? [origin] : oldTrace }
+            }
+            player.location = next
+            if !player.trail.isEmpty {
+                // Keep a smooth centerline rather than drawing the staircase of cell centers.
+                player.visualTrail.append(next)
+            }
+        }
+        return true
+    }
+
+    @discardableResult
+    func move(_ player: Contestant, to next: Cell) -> Bool {
+        guard !finished, land.contains(next), player.position.isAdjacent(to: next) else { return false }
         // An exposed trail can be cut; characters themselves never block movement.
         for rival in players where rival.id != player.id && rival.protection == 0 {
-            if rival.trail.contains(next) { reset(rival) }
+            if rival.trail.contains(next) || crossesTrail(of: rival, from: player.position, to: next) { reset(rival) }
         }
-        if player.trail.contains(next) { reset(player); return }
+        if player.trail.contains(next) || crossesTrail(of: player, from: player.position, to: next) { reset(player); return false }
         player.previous = player.position
         player.position = next
         if owners[next] == player.id {
             if !player.trail.isEmpty { capture(player, home: next) }
         } else {
-            if player.trail.isEmpty { player.anchor = player.previous }
+            if player.trail.isEmpty {
+                player.anchor = player.previous
+                player.visualTrail = [GamePoint(player.previous)]
+            }
             player.trail.append(next)
+            player.visualTrail.append(GamePoint(next))
+        }
+        return true
+    }
+
+    /// Opposing diagonal steps can cross between cell centers without sharing a cell.
+    private func crossesTrail(of player: Contestant, from start: Cell, to end: Cell) -> Bool {
+        guard start.x != end.x, start.y != end.y, let anchor = player.anchor else { return false }
+        let points = [anchor] + player.trail
+        return zip(points, points.dropFirst()).contains { a, b in
+            a.x != b.x && a.y != b.y && a != start && b != start &&
+                a.x + b.x == start.x + end.x && a.y + b.y == start.y + end.y
         }
     }
 
@@ -167,7 +259,7 @@ final class GameEngine {
         }
         for cell in claimed { owners[cell] = player.id }
         let gained = claimed.filter { oldOwners[$0] != player.id }.count
-        player.trail = []; player.anchor = nil
+        player.trail = []; player.visualTrail = []; player.anchor = nil
         revision += 1
         events.append(.captured(player.id, gained))
         // Losing a home tile under an open trail is allowed. The trail can still
@@ -191,7 +283,7 @@ final class GameEngine {
     }
 
     private func reset(_ player: Contestant) {
-        player.trail = []; player.anchor = nil; player.route = []
+        player.trail = []; player.visualTrail = []; player.anchor = nil; player.route = []
         let homes = owners.keys.filter { owners[$0] == player.id }
         if let home = homes.min(by: { distance($0, player.position) < distance($1, player.position) }) {
             player.position = home
@@ -237,8 +329,8 @@ final class GameEngine {
     private func planBot(_ player: Contestant) {
         // Rectangular excursions form readable, stealable loops.
         for _ in 0..<32 {
-            let dx = Int.random(in: 4...13, using: &random) * (Bool.random(using: &random) ? 1 : -1)
-            let dy = Int.random(in: 4...11, using: &random) * (Bool.random(using: &random) ? 1 : -1)
+            let dx = Int.random(in: 8...26, using: &random) * (Bool.random(using: &random) ? 1 : -1)
+            let dy = Int.random(in: 8...22, using: &random) * (Bool.random(using: &random) ? 1 : -1)
             let origin = player.position
             let corners = [Cell(x: origin.x + dx, y: origin.y), Cell(x: origin.x + dx, y: origin.y + dy), Cell(x: origin.x, y: origin.y + dy), origin]
             var path: [Cell] = [], cursor = origin
