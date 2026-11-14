@@ -183,12 +183,66 @@ final class GameScene: SKScene {
                 seed.position = CGPoint(x: x * tile, y: tile * 0.48)
                 seed.fillColor = UIColor(hex: 0x633A3D); seed.strokeColor = .clear; body.addChild(seed)
             }
+        } else if fruit == .orange {
+            // A squat, dimpled mandarin with a stem, pointed leaf, and peel pores.
+            let peel = CGMutablePath()
+            peel.move(to: CGPoint(x: 0, y: tile * 1.15))
+            peel.addCurve(to: CGPoint(x: -tile * 1.65, y: 0), control1: CGPoint(x: -tile * 0.9, y: tile * 1.65), control2: CGPoint(x: -tile * 1.7, y: tile * 1.0))
+            peel.addCurve(to: CGPoint(x: 0, y: -tile * 1.4), control1: CGPoint(x: -tile * 1.65, y: -tile * 1.0), control2: CGPoint(x: -tile * 0.8, y: -tile * 1.5))
+            peel.addCurve(to: CGPoint(x: tile * 1.65, y: 0), control1: CGPoint(x: tile * 0.8, y: -tile * 1.5), control2: CGPoint(x: tile * 1.65, y: -tile * 1.0))
+            peel.addCurve(to: CGPoint(x: 0, y: tile * 1.15), control1: CGPoint(x: tile * 1.7, y: tile * 1.0), control2: CGPoint(x: tile * 0.9, y: tile * 1.65))
+            peel.closeSubpath()
+            body = SKShapeNode(path: peel)
+            body.fillColor = UIColor(hex: 0xF3A64C); body.strokeColor = UIColor(hex: 0xBE742D); body.lineWidth = tile * 0.15
+            for coordinate in [CGPoint(x: -1.15, y: 0.45), CGPoint(x: -0.7, y: 0.8), CGPoint(x: 0.9, y: 0.65), CGPoint(x: 1.2, y: -0.35), CGPoint(x: -0.95, y: -0.75), CGPoint(x: 0.55, y: -1.05)] {
+                let pore = SKShapeNode(circleOfRadius: tile * 0.065)
+                pore.position = CGPoint(x: coordinate.x * tile, y: coordinate.y * tile)
+                pore.fillColor = UIColor(hex: 0xC97D2D).withAlphaComponent(0.65); pore.strokeColor = .clear
+                body.addChild(pore)
+            }
+            let stem = SKShapeNode(rectOf: CGSize(width: tile * 0.2, height: tile * 0.45), cornerRadius: tile * 0.07)
+            stem.position.y = tile * 1.35; stem.fillColor = UIColor(hex: 0x725236); stem.strokeColor = .clear; body.addChild(stem)
+            let leafPath = CGMutablePath()
+            leafPath.move(to: CGPoint(x: 0, y: tile * 1.4))
+            leafPath.addQuadCurve(to: CGPoint(x: tile * 1.25, y: tile * 1.95), control: CGPoint(x: tile * 0.4, y: tile * 2.15))
+            leafPath.addQuadCurve(to: CGPoint(x: 0, y: tile * 1.4), control: CGPoint(x: tile * 1.0, y: tile * 1.1))
+            let leaf = SKShapeNode(path: leafPath); leaf.fillColor = UIColor(hex: 0x4F8550); leaf.strokeColor = .clear; body.addChild(leaf)
+        } else if fruit == .blueberry {
+            // Three overlapping berries give Blue a cluster silhouette and a calyx.
+            body = SKShapeNode()
+            let centers = [CGPoint(x: -0.75, y: -0.25), CGPoint(x: 0, y: 0.85), CGPoint(x: 0.75, y: -0.25)]
+            for (index, center) in centers.enumerated() {
+                let berry = SKShapeNode(circleOfRadius: tile * (index == 1 ? 0.95 : 1.1))
+                berry.position = CGPoint(x: center.x * tile, y: center.y * tile)
+                berry.fillColor = UIColor(hex: index == 1 ? 0x8798DC : 0x7488D0)
+                berry.strokeColor = UIColor(hex: 0x475F9D); berry.lineWidth = tile * 0.13
+                let shine = SKShapeNode(ellipseOf: CGSize(width: tile * 0.35, height: tile * 0.18))
+                shine.position = CGPoint(x: -tile * 0.3, y: tile * 0.45); shine.zRotation = 0.5
+                shine.fillColor = UIColor.white.withAlphaComponent(0.45); shine.strokeColor = .clear
+                berry.addChild(shine); body.addChild(berry)
+            }
+            let calyxPath = CGMutablePath()
+            for index in 0..<10 {
+                let angle = CGFloat(index) * .pi / 5 + .pi / 2
+                let radius = tile * (index % 2 == 0 ? 0.4 : 0.19)
+                let point = CGPoint(x: cos(angle) * radius, y: tile * 1.05 + sin(angle) * radius)
+                if index == 0 { calyxPath.move(to: point) } else { calyxPath.addLine(to: point) }
+            }
+            calyxPath.closeSubpath()
+            let calyx = SKShapeNode(path: calyxPath); calyx.fillColor = UIColor(hex: 0x3F528B); calyx.strokeColor = .clear; body.addChild(calyx)
         } else {
-            body = SKShapeNode(circleOfRadius: tile * 1.5)
-            body.fillColor = fruit.color; body.strokeColor = fruit.darkColor; body.lineWidth = tile * 0.18
-            let leaf = SKShapeNode(ellipseOf: CGSize(width: tile, height: tile * 0.45))
-            leaf.fillColor = UIColor(hex: 0x527F51); leaf.strokeColor = .clear
-            leaf.position = CGPoint(x: tile * 0.35, y: tile * 1.5); leaf.zRotation = 0.4; body.addChild(leaf)
+            // Kiwi is an oval cut face with a brown rind, pale core, and seed ring.
+            body = SKShapeNode(ellipseOf: CGSize(width: tile * 2.8, height: tile * 3.25))
+            body.fillColor = UIColor(hex: 0xB5CF69); body.strokeColor = UIColor(hex: 0x94704A); body.lineWidth = tile * 0.32
+            let core = SKShapeNode(ellipseOf: CGSize(width: tile * 0.7, height: tile * 1.2))
+            core.position.y = tile * 0.25; core.fillColor = UIColor(hex: 0xF1EBC3); core.strokeColor = .clear; body.addChild(core)
+            for index in 0..<14 {
+                let angle = CGFloat(index) * 2 * .pi / 14
+                let seed = SKShapeNode(ellipseOf: CGSize(width: tile * 0.13, height: tile * 0.29))
+                seed.position = CGPoint(x: cos(angle) * tile * 1.02, y: sin(angle) * tile * 1.22)
+                seed.zRotation = angle - .pi / 2
+                seed.fillColor = UIColor(hex: 0x4C4532); seed.strokeColor = .clear; body.addChild(seed)
+            }
         }
         node.addChild(body)
         for x: CGFloat in [-0.55, 0.55] {
@@ -258,7 +312,8 @@ final class GameScene: SKScene {
         sounds.setMoving(!engine.finished && !wasCut && hypot(after.x - before.x, after.y - before.y) > 0.00001)
         let seconds = Int(ceil(engine.timeRemaining))
         if seconds < previousSeconds, (1...10).contains(seconds) { sounds.play(.countdown) }
-        if engine.finished { sounds.stopAll() }
+        let didFinish = events.contains { if case .finished = $0 { return true }; return false }
+        if didFinish { sounds.stopAll() }
         for event in events {
             if case .captured(let id, let amount) = event, id == 0, amount > 0 {
                 showCapture(amount)
@@ -271,6 +326,9 @@ final class GameScene: SKScene {
             }
             onEvent?(event)
         }
+        // The session freezes the scene in onEvent; play after that callback so the
+        // end-of-round cue survives the pause that stops movement audio.
+        if didFinish, engine.timeRemaining == 0 { sounds.play(.timeUp) }
         hudClock += dt
         if hudClock > 0.12 || !events.isEmpty { hudClock = 0; onTick?() }
     }
@@ -323,13 +381,14 @@ final class GameScene: SKScene {
 
 // Short synthesized PCM effects keep the game offline and avoid external assets.
 enum GameSound: CaseIterable {
-    case movement, snip, capture, countdown
+    case movement, snip, capture, countdown, timeUp
     var duration: Double {
         switch self {
         case .movement: return 0.48
         case .snip: return 0.22
         case .capture: return 0.55
         case .countdown: return 0.09
+        case .timeUp: return 0.8
         }
     }
 }
@@ -435,6 +494,14 @@ final class GameAudio: GameSoundPlaying {
                 }
             case .countdown:
                 value = sin(2 * .pi * 880 * t) * exp(-t * 35) * 0.5
+            case .timeUp:
+                value = [659.25, 523.25, 392.0].enumerated().reduce(0.0) { result, note in
+                    let local = t - Double(note.offset) * 0.14
+                    guard local >= 0 else { return result }
+                    let envelope = min(1, local / 0.005) * exp(-local * 7)
+                    let bell = sin(2 * .pi * note.element * local) + 0.18 * sin(4 * .pi * note.element * local)
+                    return result + bell * envelope * 0.3
+                }
             }
             var sample = Int16(max(-1, min(1, value * fade)) * Double(Int16.max)).littleEndian
             withUnsafeBytes(of: &sample) { samples.append(contentsOf: $0) }

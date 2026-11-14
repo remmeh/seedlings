@@ -485,11 +485,12 @@ final class GameEngineTests: XCTestCase {
     private final class SoundSpy: GameSoundPlaying {
         var enabled = true
         var effects: [GameSound] = []
+        var activeEffects: [GameSound] = []
         var moving = false
         var stopCount = 0
         func setMoving(_ value: Bool) { moving = value && enabled }
-        func play(_ sound: GameSound) { if enabled { effects.append(sound) } }
-        func stopAll() { moving = false; stopCount += 1 }
+        func play(_ sound: GameSound) { if enabled { effects.append(sound); activeEffects.append(sound) } }
+        func stopAll() { moving = false; activeEffects = []; stopCount += 1 }
     }
 
     @MainActor
@@ -545,9 +546,43 @@ final class GameEngineTests: XCTestCase {
         XCTAssertEqual(spy.effects, Array(repeating: .countdown, count: 10))
         engine.elapsed = 59.99
         time += 0.02; scene.update(time)
-        XCTAssertEqual(spy.effects.count, 10)
+        XCTAssertEqual(spy.effects, Array(repeating: .countdown, count: 10) + [.timeUp])
         XCTAssertGreaterThan(spy.stopCount, 0)
         XCTAssertTrue(engine.finished)
+    }
+
+    @MainActor
+    func testTimeUpChimeSurvivesResultsFreezeAndPlaysOnlyOnce() {
+        let spy = SoundSpy()
+        let engine = fixture()
+        let scene = GameScene(engine: engine, sounds: spy)
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 900, height: 650))
+        view.isPaused = true; view.presentScene(scene)
+        scene.onEvent = { event in
+            if case .finished = event { scene.clearInput(); scene.frozen = true }
+        }
+        scene.update(1)
+        engine.elapsed = 59.99
+        scene.update(1.02)
+        XCTAssertTrue(scene.frozen)
+        XCTAssertEqual(spy.activeEffects, [.timeUp])
+        scene.update(1.04)
+        XCTAssertEqual(spy.effects, [.timeUp])
+        XCTAssertEqual(spy.activeEffects, [.timeUp])
+        scene.onEvent = nil
+    }
+
+    @MainActor
+    func testEarlyFullAllocationDoesNotPlayTimeUpChime() {
+        let spy = SoundSpy()
+        let engine = fixture()
+        let scene = GameScene(engine: engine, sounds: spy)
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 900, height: 650))
+        view.isPaused = true; view.presentScene(scene)
+        engine.owners = Dictionary(uniqueKeysWithValues: engine.land.map { ($0, 0) })
+        scene.update(1)
+        XCTAssertTrue(engine.finished)
+        XCTAssertFalse(spy.effects.contains(.timeUp))
     }
 
     @MainActor
