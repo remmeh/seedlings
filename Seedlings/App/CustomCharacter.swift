@@ -121,12 +121,14 @@ struct CustomCharacterCreator: View {
     @State private var processing = false
     @State private var draft: CustomCharacter?
     @State private var accent = Color.orange
+    @State private var savedToPicker = false
     @State private var errorMessage: String?
     let onSave: (CustomCharacter) throws -> Void
 
     init(character: CustomCharacter? = nil, onSave: @escaping (CustomCharacter) throws -> Void) {
         self.onSave = onSave
         _draft = State(initialValue: character)
+        _savedToPicker = State(initialValue: character != nil)
         _name = State(initialValue: character?.name ?? "")
         _description = State(initialValue: character?.name ?? "")
         _accent = State(initialValue: character.map { Color($0.color) } ?? .orange)
@@ -163,9 +165,10 @@ struct CustomCharacterCreator: View {
                             ColorPicker("Territory color", selection: $accent, supportsOpacity: false)
                             Text("Your territory, trail and seeds use this color. We adjust lightness for visibility.")
                                 .font(.caption).foregroundStyle(.secondary)
-                            Button("Use this character") { save(draft) }
-                                .buttonStyle(.borderedProminent).tint(Color.ink)
-                                .disabled(processing || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            if savedToPicker {
+                                Label("Saved and selected in your character picker", systemImage: "checkmark.circle.fill")
+                                    .font(.callout).foregroundStyle(Color.moss)
+                            }
                         }
                     }
                     if let errorMessage { Text(errorMessage).foregroundStyle(.red).font(.callout) }
@@ -175,7 +178,14 @@ struct CustomCharacterCreator: View {
             }
             .background(Color.paper)
             .navigationTitle("Custom character").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() }.disabled(processing) } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() }.disabled(processing) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Use character") { if let draft { save(draft) } }
+                        .fontWeight(.bold)
+                        .disabled(draft == nil || processing || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
         }
         .interactiveDismissDisabled(processing)
         .imagePlaygroundSheet(isPresented: $presentingPlayground, concepts: [
@@ -192,6 +202,8 @@ struct CustomCharacterCreator: View {
                             try CharacterProcessor.create(from: data, name: prompt)
                         }.value
                         draft = character; name = character.name; accent = Color(character.color)
+                        do { try onSave(character); savedToPicker = true }
+                        catch { savedToPicker = false; errorMessage = "Your image is ready, but couldn’t be saved. Tap Use character to retry." }
                     } catch { errorMessage = "Couldn’t prepare that image. \(error.localizedDescription)" }
                     processing = false
                 }

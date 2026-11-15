@@ -96,21 +96,20 @@ struct ContentView: View {
                             .accessibilityLabel(fruit.name)
                             .accessibilityAddTraits(!session.useCustomCharacter && session.selectedFruit == fruit ? .isSelected : [])
                     }
+                    if let custom = session.customCharacter, let image = custom.image {
+                        Button { session.useCustomCharacter = true } label: {
+                            Image(uiImage: image).interpolation(.none).resizable().scaledToFit()
+                                .frame(width: 47, height: 47).padding(7)
+                                .background(session.useCustomCharacter ? Color.white : Color(custom.color).opacity(0.3), in: RoundedRectangle(cornerRadius: 18))
+                                .overlay(RoundedRectangle(cornerRadius: 18).stroke(session.useCustomCharacter ? Color(custom.darkColor) : .clear, lineWidth: 2))
+                        }.buttonStyle(.plain)
+                            .accessibilityLabel(custom.name)
+                            .accessibilityAddTraits(session.useCustomCharacter ? .isSelected : [])
+                    }
                 }
+                Text("Selected: \(session.selectedCustomCharacter?.name ?? session.selectedFruit.name)")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded)).foregroundStyle(Color.moss)
             }.padding(.top, 8)
-            if let custom = session.customCharacter, let image = custom.image {
-                Button { session.useCustomCharacter = true } label: {
-                    HStack {
-                        Image(uiImage: image).interpolation(.none).resizable().scaledToFit().frame(width: 48, height: 48)
-                        VStack(alignment: .leading) {
-                            Text(custom.name).fontWeight(.bold)
-                            Text(session.useCustomCharacter ? "Your selected character" : "Use your custom character").font(.caption)
-                        }
-                        Spacer()
-                        if session.useCustomCharacter { Image(systemName: "checkmark.circle.fill") }
-                    }.padding(12).background(Color(custom.color).opacity(0.3), in: RoundedRectangle(cornerRadius: 16))
-                }.buttonStyle(.plain)
-            }
             if #available(iOS 18.2, *) {
                 Button { showCharacterCreator = true } label: {
                     Label(session.customCharacter == nil ? "Create your own character" : "Customize your character", systemImage: "sparkles")
