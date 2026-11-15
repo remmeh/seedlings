@@ -4,6 +4,9 @@
 	classes = {};
 	objectVersion = 56;
 	objects = {
+		CACE00000000000000000001 /* CustomCharacter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CACE00000000000000000002; };
+		CACE00000000000000000002 /* CustomCharacter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Seedlings/App/CustomCharacter.swift; sourceTree = "<group>"; };
+
 		4DD901F663E08BCB06D22B39 /* Seedlings/App/GameSession.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Seedlings/App/GameSession.swift"; sourceTree = "<group>"; };
 		0FB5BBE40F712059FEF2724D /* Seedlings/App/GameSession.swift in Sources */ = { isa = PBXBuildFile; fileRef = 4DD901F663E08BCB06D22B39; };
 		7548817A232DAB88EDBF4AC3 /* Seedlings/App/SeedlingsApp.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Seedlings/App/SeedlingsApp.swift"; sourceTree = "<group>"; };
@@ -23,11 +26,11 @@
 		69E27356EF629022720D868A /* README */ = { isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		0D8176A58D5B6AB967B645E2 /* Seedlings.app */ = { isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Seedlings.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3F849ECECDA4C63E01DDFB40 /* SeedlingsTests.xctest */ = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SeedlingsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		AC17B2283C9805D3EBD14667 /* App source */ = { isa = PBXGroup; children = (4DD901F663E08BCB06D22B39, 7548817A232DAB88EDBF4AC3, 810C99736D214486714552B7, 78C48BC8FF895EDBF1831422, 487B14656A0D9F7FF7DDD1DA, D9A7464F51E331BB9B4AAFCF, 20E338624CEE29D0EFFEAD85,); name = Seedlings; sourceTree = "<group>"; };
+		AC17B2283C9805D3EBD14667 /* App source */ = { isa = PBXGroup; children = (CACE00000000000000000002 /* CustomCharacter.swift */, 4DD901F663E08BCB06D22B39, 7548817A232DAB88EDBF4AC3, 810C99736D214486714552B7, 78C48BC8FF895EDBF1831422, 487B14656A0D9F7FF7DDD1DA, D9A7464F51E331BB9B4AAFCF, 20E338624CEE29D0EFFEAD85,); name = Seedlings; sourceTree = "<group>"; };
 		39FDEC1194D94212B871A28B /* Tests */ = { isa = PBXGroup; children = (9A4F285BC9EB2F2380A077CF,); name = SeedlingsTests; sourceTree = "<group>"; };
 		FE0A091FDBFB3E9C31B7A1BD /* Products */ = { isa = PBXGroup; children = (0D8176A58D5B6AB967B645E2, 3F849ECECDA4C63E01DDFB40,); name = Products; sourceTree = "<group>"; };
 		C649629229F6187C3D12CE69 /* Main Group */ = { isa = PBXGroup; children = (AC17B2283C9805D3EBD14667, 39FDEC1194D94212B871A28B, 69E27356EF629022720D868A, FE0A091FDBFB3E9C31B7A1BD,); sourceTree = "<group>"; };
-		7FF8C9FC6B7E2F79F2A9323E /* App Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (0FB5BBE40F712059FEF2724D, 0F5C072A53BA9424BC5E57DD, 981EBB1860574E8C70875D36, 18E16E9111022198BF669651, D00B66591DD8549E879EFAE3, 3DF0BD0444D8895B020671E8,); runOnlyForDeploymentPostprocessing = 0; };
+		7FF8C9FC6B7E2F79F2A9323E /* App Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (CACE00000000000000000001 /* CustomCharacter.swift in Sources */, 0FB5BBE40F712059FEF2724D, 0F5C072A53BA9424BC5E57DD, 981EBB1860574E8C70875D36, 18E16E9111022198BF669651, D00B66591DD8549E879EFAE3, 3DF0BD0444D8895B020671E8,); runOnlyForDeploymentPostprocessing = 0; };
 		ACA16EC71E4125BC7D8202DD /* App Resources */ = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (C291ADC4C0996F7AEF1470A2,); runOnlyForDeploymentPostprocessing = 0; };
 		89BA70CDC82F46E3D1AF1EFA /* App Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		AFE267113A60CE81F981D656 /* Test Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (263AA1CAFC8919FEC02FA66C,); runOnlyForDeploymentPostprocessing = 0; };

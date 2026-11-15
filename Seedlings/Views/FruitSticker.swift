@@ -51,6 +51,7 @@ struct FruitSticker: View {
 
 struct IslandIllustration: View {
     let fruit: Fruit
+    var customCharacter: CustomCharacter? = nil
     var body: some View {
         GeometryReader { geometry in
             let w = geometry.size.width
@@ -73,7 +74,9 @@ struct IslandIllustration: View {
                         (CGRect(x: size.width * 0.56, y: 0, width: size.width * 0.5, height: size.height * 0.38), .orange),
                         (CGRect(x: size.width * 0.7, y: size.height * 0.62, width: size.width * 0.4, height: size.height * 0.3), .blueberry)
                     ]
-                    for (rect, fruit) in patches { context.fill(Path(roundedRect: rect, cornerRadius: 18), with: .color(Color(fruit.color))) }
+                    for (index, patch) in patches.enumerated() {
+                        context.fill(Path(roundedRect: patch.0, cornerRadius: 18), with: .color(Color(index == 0 ? customCharacter?.color ?? patch.1.color : patch.1.color)))
+                    }
                     for x in stride(from: 12.0, to: size.width, by: 22) {
                         for y in stride(from: 12.0, to: size.height, by: 22) {
                             context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: 2, height: 3)), with: .color(Color.ink.opacity(0.18)))
@@ -85,9 +88,13 @@ struct IslandIllustration: View {
                         p.addLine(to: CGPoint(x: size.width * 0.64, y: size.height * 0.34))
                         p.addLine(to: CGPoint(x: size.width * 0.64, y: size.height * 0.59))
                     }
-                    context.stroke(trail, with: .color(Color(fruit.darkColor)), style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round, dash: [2, 10]))
+                    context.stroke(trail, with: .color(Color(customCharacter?.darkColor ?? fruit.darkColor)), style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round, dash: [2, 10]))
                 }
-                FruitSticker(fruit: fruit).frame(width: w * 0.23, height: w * 0.23)
+                Group {
+                    if let image = customCharacter?.image {
+                        Image(uiImage: image).interpolation(.none).resizable().scaledToFit()
+                    } else { FruitSticker(fruit: fruit) }
+                }.frame(width: w * 0.23, height: w * 0.23)
                     .rotationEffect(.degrees(-8)).position(x: w * 0.64, y: h * 0.59)
                 Image(systemName: "crown.fill").font(.system(size: w * 0.08)).foregroundStyle(Color(red: 0.83, green: 0.63, blue: 0.2))
                     .rotationEffect(.degrees(8)).position(x: w * 0.65, y: h * 0.41)

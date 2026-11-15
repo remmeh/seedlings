@@ -16,6 +16,7 @@ extension UIColor {
 /// All artwork is rendered natively. No remote assets, web views, or dependencies.
 final class GameScene: SKScene {
     let engine: GameEngine
+    let customCharacter: CustomCharacter?
     var onTick: (() -> Void)?
     var onEvent: ((GameEvent) -> Void)?
     var controlHeading: GamePoint?
@@ -41,8 +42,9 @@ final class GameScene: SKScene {
     private let touchMarker = SKShapeNode(circleOfRadius: 10)
     var haptics = true
 
-    init(engine: GameEngine, sounds: GameSoundPlaying = GameAudio()) {
+    init(engine: GameEngine, sounds: GameSoundPlaying = GameAudio(), customCharacter: CustomCharacter? = nil) {
         self.engine = engine
+        self.customCharacter = customCharacter
         self.sounds = sounds
         super.init(size: CGSize(width: 900, height: 650))
         scaleMode = .resizeFill
@@ -89,12 +91,12 @@ final class GameScene: SKScene {
         let grain = SKShapeNode(path: dots)
         grain.fillColor = UIColor(hex: 0xC9C6B8); grain.strokeColor = .clear; grain.zPosition = 2; board.addChild(grain)
         for player in engine.players {
-            let shape = SKShapeNode(); shape.fillColor = player.fruit.color; shape.strokeColor = .clear
+            let shape = SKShapeNode(); shape.fillColor = color(for: player.id); shape.strokeColor = .clear
             shape.zPosition = 3; territories[player.id] = shape; board.addChild(shape)
-            let trail = SKShapeNode(); trail.strokeColor = player.fruit.darkColor; trail.lineWidth = max(2.5, tile * 0.85)
+            let trail = SKShapeNode(); trail.strokeColor = color(for: player.id, dark: true); trail.lineWidth = max(2.5, tile * 0.85)
             trail.lineCap = .round; trail.lineJoin = .round; trail.zPosition = 5
             trails[player.id] = trail; board.addChild(trail)
-            let sprite = makeCharacter(player.fruit)
+            let sprite = player.id == 0 && customCharacter != nil ? makeCustomCharacter() : makeCharacter(player.fruit)
             sprite.zPosition = 10 + CGFloat(player.id) * 0.01
             sprites[player.id] = sprite; board.addChild(sprite)
         }
@@ -157,10 +159,35 @@ final class GameScene: SKScene {
                 pattern.addPath(seed, transform: transform)
             }
             let seeds = SKShapeNode(path: pattern)
-            seeds.fillColor = player.fruit.darkColor.withAlphaComponent(0.32)
+            seeds.fillColor = color(for: player.id, dark: true).withAlphaComponent(0.32)
             seeds.strokeColor = .clear
             marks.addChild(seeds)
         }
+    }
+
+    func color(for id: Int, dark: Bool = false) -> UIColor {
+        if id == 0, let customCharacter { return dark ? customCharacter.darkColor : customCharacter.color }
+        return dark ? engine.players[id].fruit.darkColor : engine.players[id].fruit.color
+    }
+
+    private func makeCustomCharacter() -> SKNode {
+        let node = SKNode()
+        let scale = tile * 2
+        let shadow = SKShapeNode(ellipseOf: CGSize(width: scale * 3.3, height: scale * 1.1))
+        shadow.fillColor = .black.withAlphaComponent(0.12); shadow.strokeColor = .clear
+        shadow.position.y = -scale * 1.5; node.addChild(shadow)
+        if let image = customCharacter?.image {
+            let texture = SKTexture(image: image); texture.filteringMode = .nearest
+            let sprite = SKSpriteNode(texture: texture, size: CGSize(width: scale * 4.2, height: scale * 4.2))
+            node.addChild(sprite)
+        }
+        let crown = SKLabelNode(fontNamed: "AvenirNext-Bold")
+        crown.name = "crown"; crown.text = "♛"; crown.fontSize = scale * 2.5
+        crown.fontColor = UIColor(hex: 0xD9A52E); crown.position.y = scale * 2.2; node.addChild(crown)
+        let you = SKLabelNode(fontNamed: "AvenirNext-DemiBold")
+        you.text = "YOU"; you.fontSize = max(8, scale * 0.8); you.fontColor = UIColor(hex: 0x315E44)
+        you.position.y = -scale * 2.7; node.addChild(you)
+        return node
     }
 
     private func makeCharacter(_ fruit: Fruit) -> SKNode {
@@ -290,7 +317,7 @@ final class GameScene: SKScene {
             trails[player.id]?.children.forEach { $0.removeFromParent() }
             for (index, cell) in player.trail.enumerated() where index % 8 == 0 {
                 let seed = SKShapeNode(ellipseOf: CGSize(width: tile * 0.7, height: tile * 1.24))
-                seed.fillColor = player.fruit.darkColor; seed.strokeColor = .white.withAlphaComponent(0.6)
+                seed.fillColor = color(for: player.id, dark: true); seed.strokeColor = .white.withAlphaComponent(0.6)
                 seed.lineWidth = 0.8; seed.zRotation = -0.5; seed.position = point(cell)
                 trails[player.id]?.addChild(seed)
             }

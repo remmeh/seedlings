@@ -13,6 +13,7 @@ struct ContentView: View {
     init(session: GameSession = GameSession()) {
         _session = StateObject(wrappedValue: session)
     }
+    @State private var showCharacterCreator = false
     @State private var showJoystick = true
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
@@ -32,6 +33,9 @@ struct ContentView: View {
         .statusBarHidden(session.scene != nil)
         .persistentSystemOverlays(session.scene == nil ? .automatic : .hidden)
         .sheet(isPresented: Binding(get: { session.showHelp }, set: { session.setHelp($0) })) { help }
+        .sheet(isPresented: $showCharacterCreator) {
+            if #available(iOS 18.2, *) { CustomCharacterCreator(character: session.customCharacter, onSave: session.saveCharacter) }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active, session.scene != nil { session.setPaused(true) }
         }
@@ -56,10 +60,10 @@ struct ContentView: View {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 50) {
                         homeCopy.frame(width: 360)
-                        IslandIllustration(fruit: session.selectedFruit).frame(width: 440, height: 450)
+                        IslandIllustration(fruit: session.selectedFruit, customCharacter: session.selectedCustomCharacter).frame(width: 440, height: 450)
                     }.padding(35)
                     VStack(spacing: 12) {
-                        IslandIllustration(fruit: session.selectedFruit).frame(height: 260)
+                        IslandIllustration(fruit: session.selectedFruit, customCharacter: session.selectedCustomCharacter).frame(height: 260)
                         homeCopy.frame(maxWidth: 420)
                     }.padding(28)
                 }
@@ -84,16 +88,35 @@ struct ContentView: View {
                 Text("PICK YOUR LITTLE SELF").font(.system(size: 10, weight: .bold, design: .rounded)).tracking(1.5)
                 HStack(spacing: 12) {
                     ForEach(Fruit.allCases, id: \.rawValue) { fruit in
-                        Button { session.selectedFruit = fruit } label: {
+                        Button { session.selectedFruit = fruit; session.useCustomCharacter = false } label: {
                             FruitSticker(fruit: fruit).frame(width: 47, height: 47).padding(7)
-                                .background(session.selectedFruit == fruit ? Color.white : Color.white.opacity(0.35), in: RoundedRectangle(cornerRadius: 18))
-                                .overlay(RoundedRectangle(cornerRadius: 18).stroke(session.selectedFruit == fruit ? Color.moss : .clear, lineWidth: 2))
+                                .background(!session.useCustomCharacter && session.selectedFruit == fruit ? Color.white : Color.white.opacity(0.35), in: RoundedRectangle(cornerRadius: 18))
+                                .overlay(RoundedRectangle(cornerRadius: 18).stroke(!session.useCustomCharacter && session.selectedFruit == fruit ? Color.moss : .clear, lineWidth: 2))
                         }.buttonStyle(.plain)
                             .accessibilityLabel(fruit.name)
-                            .accessibilityAddTraits(session.selectedFruit == fruit ? .isSelected : [])
+                            .accessibilityAddTraits(!session.useCustomCharacter && session.selectedFruit == fruit ? .isSelected : [])
                     }
                 }
             }.padding(.top, 8)
+            if let custom = session.customCharacter, let image = custom.image {
+                Button { session.useCustomCharacter = true } label: {
+                    HStack {
+                        Image(uiImage: image).interpolation(.none).resizable().scaledToFit().frame(width: 48, height: 48)
+                        VStack(alignment: .leading) {
+                            Text(custom.name).fontWeight(.bold)
+                            Text(session.useCustomCharacter ? "Your selected character" : "Use your custom character").font(.caption)
+                        }
+                        Spacer()
+                        if session.useCustomCharacter { Image(systemName: "checkmark.circle.fill") }
+                    }.padding(12).background(Color(custom.color).opacity(0.3), in: RoundedRectangle(cornerRadius: 16))
+                }.buttonStyle(.plain)
+            }
+            if #available(iOS 18.2, *) {
+                Button { showCharacterCreator = true } label: {
+                    Label(session.customCharacter == nil ? "Create your own character" : "Customize your character", systemImage: "sparkles")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                }.buttonStyle(.bordered).tint(Color.ink)
+            }
             Button { session.start() } label: {
                 HStack {
                     Spacer(); Text("Let's grow").font(.system(size: 18, weight: .bold, design: .rounded))
@@ -133,7 +156,7 @@ struct ContentView: View {
                         HStack(spacing: 12) {
                             ForEach(ranked, id: \.self) { id in
                                 HStack(spacing: 4) {
-                                    Text(session.engine?.players[id].fruit.emoji ?? "🍉")
+                                    playerBadge(id, size: 20)
                                     Text("\(percentage(id), specifier: "%.1f")%")
                                     if session.leader == id { Image(systemName: "crown.fill").foregroundStyle(.orange) }
                                 }
@@ -172,6 +195,15 @@ struct ContentView: View {
         .defersSystemGestures(on: .all)
     }
 
+    @ViewBuilder
+    private func playerBadge(_ id: Int, size: CGFloat) -> some View {
+        if id == 0, let image = session.scene?.customCharacter?.image {
+            Image(uiImage: image).interpolation(.none).resizable().scaledToFit().frame(width: size, height: size)
+        } else {
+            Text(session.engine?.players[id].fruit.emoji ?? "🍉").font(.system(size: size * 0.8))
+        }
+    }
+
     private var ranked: [Int] {
         (0..<session.scores.count).sorted {
             session.scores[$0] == session.scores[$1] ? $0 < $1 : session.scores[$0] > session.scores[$1]
@@ -181,7 +213,7 @@ struct ContentView: View {
     private func scoreRow(_ id: Int) -> some View {
         let fruit = session.engine?.players[id].fruit ?? .watermelon
         return HStack(spacing: 8) {
-            FruitSticker(fruit: fruit).frame(width: 34, height: 34)
+            playerBadge(id, size: 34)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(id == 0 ? "You" : fruit.name).font(.system(size: 13, weight: .bold, design: .rounded))

@@ -4,6 +4,25 @@ import Combine
 final class GameSession: ObservableObject {
     @Published var scene: GameScene?
     @Published var level = 1
+    @Published var customCharacter: CustomCharacter?
+    @Published var useCustomCharacter = false {
+        didSet { UserDefaults.standard.set(useCustomCharacter, forKey: "seedlings.useCustomCharacter") }
+    }
+    private let characterStore: CustomCharacterStore
+
+    init(characterStore: CustomCharacterStore = CustomCharacterStore()) {
+        self.characterStore = characterStore
+        customCharacter = try? characterStore.load()
+        useCustomCharacter = customCharacter != nil && UserDefaults.standard.bool(forKey: "seedlings.useCustomCharacter")
+    }
+
+    var selectedCustomCharacter: CustomCharacter? { useCustomCharacter ? customCharacter : nil }
+
+    func saveCharacter(_ character: CustomCharacter) throws {
+        try characterStore.save(character)
+        customCharacter = character; useCustomCharacter = true
+    }
+
     @Published var selectedFruit: Fruit = .watermelon
     @Published var scores: [Int] = [0, 0, 0, 0]
     @Published var allocated: Double = 0
@@ -37,8 +56,8 @@ final class GameSession: ObservableObject {
         scene?.clearInput(); scene?.frozen = true
         self.level = level; complete = false; paused = false; showHelp = false
         islandSeed = seed ?? UInt64.random(in: 1...UInt64.max)
-        let engine = GameEngine(level: level, fruit: selectedFruit, seed: islandSeed)
-        let newScene = GameScene(engine: engine)
+        let engine = GameEngine(level: level, fruit: selectedCustomCharacter == nil ? selectedFruit : .watermelon, seed: islandSeed)
+        let newScene = GameScene(engine: engine, customCharacter: selectedCustomCharacter)
         newScene.haptics = haptics
         newScene.soundEnabled = soundEnabled
         newScene.onTick = { [weak self] in self?.refresh() }

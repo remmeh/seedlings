@@ -622,6 +622,116 @@ final class GameEngineTests: XCTestCase {
         window.isHidden = true
     }
 
+    private func sampleCustomCharacter() throws -> CustomCharacter {
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 120, height: 80), format: format).image { context in
+            context.cgContext.setFillColor(UIColor(hex: 0xE9B75B).cgColor)
+            context.cgContext.fillEllipse(in: CGRect(x: 10, y: 5, width: 100, height: 70))
+            context.cgContext.setFillColor(UIColor.black.cgColor)
+            context.cgContext.fillEllipse(in: CGRect(x: 40, y: 35, width: 5, height: 5))
+        }
+        return try CharacterProcessor.pixelCharacter(from: image.cgImage!, name: "Dumpling")
+    }
+
+    func testPixelCharacterHasTransparencyAndMatchingReadablePalette() throws {
+        let character = try sampleCustomCharacter()
+        let image = try XCTUnwrap(character.image?.cgImage)
+        XCTAssertEqual(image.width, 64); XCTAssertEqual(image.height, 64)
+        XCTAssertEqual(character.name, "Dumpling")
+        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
+        character.color.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+        XCTAssertGreaterThan(hue, 0.07); XCTAssertLessThan(hue, 0.17)
+        XCTAssertGreaterThan(saturation, 0.2); XCTAssertLessThan(brightness, 0.9)
+        let context = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 256,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(image, in: CGRect(x: 0, y: 0, width: 64, height: 64))
+        let pixels = context.data!.assumingMemoryBound(to: UInt8.self)
+        XCTAssertEqual(pixels[3], 0)
+        XCTAssertEqual(pixels[(32 * 64 + 32) * 4 + 3], 255)
+    }
+
+    func testCustomCharacterPersistsAndRejectsCorruptData() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = CustomCharacterStore(directory: directory)
+        let character = try sampleCustomCharacter()
+        try store.save(character)
+        let loaded = try store.load()
+        XCTAssertEqual(loaded.id, character.id)
+        XCTAssertEqual(loaded.pngData, character.pngData)
+        XCTAssertEqual(loaded.territoryHex, character.territoryHex)
+        try Data("corrupt".utf8).write(to: directory.appendingPathComponent("character.json"))
+        XCTAssertThrowsError(try store.load())
+    }
+
+    @MainActor
+    func testCustomCharacterReplacesPlayerAndUsesMatchingColors() throws {
+        let previous = UserDefaults.standard.object(forKey: "seedlings.useCustomCharacter")
+        defer { UserDefaults.standard.set(previous, forKey: "seedlings.useCustomCharacter") }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = CustomCharacterStore(directory: directory)
+        let session = GameSession(characterStore: store)
+        let character = try sampleCustomCharacter()
+        try session.saveCharacter(character)
+        session.start(seed: 42)
+        let scene = try XCTUnwrap(session.scene)
+        scene.frozen = true
+        XCTAssertEqual(scene.customCharacter?.id, character.id)
+        XCTAssertEqual(scene.color(for: 0), character.color)
+        XCTAssertEqual(scene.color(for: 0, dark: true), character.darkColor)
+        XCTAssertEqual(scene.color(for: 1), scene.engine.players[1].fruit.color)
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 900, height: 650))
+        view.isPaused = true; view.presentScene(scene)
+        var textures: [SKTexture] = []
+        scene.enumerateChildNodes(withName: "//*") { node, _ in
+            if let sprite = node as? SKSpriteNode, let texture = sprite.texture { textures.append(texture) }
+        }
+        XCTAssertEqual(textures.count, 1)
+        XCTAssertEqual(textures.first?.filteringMode, .nearest)
+        let reloaded = GameSession(characterStore: store)
+        XCTAssertEqual(reloaded.selectedCustomCharacter?.id, character.id)
+        session.useCustomCharacter = false
+        session.start(seed: 42)
+        XCTAssertNil(session.scene?.customCharacter)
+        XCTAssertEqual(try store.load().id, character.id)
+        session.menu()
+    }
+
+    func testCustomColorRemainsVisibleForWhiteAndBlackCharacters() {
+        for color in [UIColor.white, .black] {
+            let hex = CharacterProcessor.territoryColor(color)
+            XCTAssertNotEqual(hex, 0xFFFFFF); XCTAssertNotEqual(hex, 0)
+            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            UIColor(hex: hex).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+            XCTAssertGreaterThanOrEqual(s, 0.24)
+            XCTAssertGreaterThan(b, 0.64); XCTAssertLessThan(b, 0.89)
+        }
+    }
+
+    @available(iOS 18.2, *)
+    @MainActor
+    func testCustomCharacterEditorRendersSavedSpriteAndColor() throws {
+        let character = try sampleCustomCharacter()
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else {
+            XCTFail("An iPad window scene is required"); return
+        }
+        let window = UIWindow(windowScene: windowScene)
+        window.frame = CGRect(x: 0, y: 0, width: 620, height: 1050)
+        let controller = UIHostingController(rootView: CustomCharacterCreator(character: character, onSave: { _ in }))
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        controller.view.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "Custom character editor"
+        attachment.lifetime = .keepAlways; add(attachment)
+        XCTAssertEqual(controller.view.bounds.size, window.bounds.size)
+        window.isHidden = true
+    }
+
     func testBotsPreserveOwnershipInvariants() {
         let engine = GameEngine(seed: 19)
         for _ in 0..<6000 {
